@@ -1,6 +1,6 @@
 # ai-commit.nvim
 
-A Neovim plugin that generates meaningful commit messages using AI based on your git changes.
+A Neovim plugin that uses AI to generate high-quality, conventional commit messages based on your staged git changes.
 
 > [!WARNING]
 > Currently, the plugin only supports [openrouter.ai](https://openrouter.ai), but support for other services (OpenAI, Anthropic, local Ollama, etc.) will be added in the future
@@ -14,6 +14,9 @@ A Neovim plugin that generates meaningful commit messages using AI based on your
 - Clean and minimal dropdown interface
 - Follows conventional commit format
 - Optional automatic push after commit
+- Remembers last suggestions so you can recall them
+- Works in gitcommit buffers:
+If you run :AICommit inside a `gitcommit` file (e.g., opened by :G commit or via git commit in terminal), the selected AI message will be inserted at the very top of your buffer—no manual copy-paste required.
 - Asynchronous message generation without UI blocking
 
 ## Prerequisites
@@ -25,42 +28,83 @@ A Neovim plugin that generates meaningful commit messages using AI based on your
 
 ## Installation
 
-Using [lazy.nvim](https://github.com/folke/lazy.nvim):
+With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-    "vernette/ai-commit.nvim",
+    "cjvnjde/ai-commit.nvim",
     dependencies = {
         "nvim-lua/plenary.nvim",
         "nvim-telescope/telescope.nvim",
     },
-    config = function()
-        require("ai-commit").setup({
-            -- your configuration
-        })
-    end
+    opts = {
+      -- your configuration here
+    },
 }
+```
+
+## API Key Setup
+
+The plugin requires an OpenRouter API key for AI generation.
+
+Set your API key as an environment variable before launching Neovim:
+
+```bash
+export OPENROUTER_API_KEY=sk-...
 ```
 
 ## Configuration
 
+You can configure the plugin in your setup call. Here are all the available options:
+
 ```lua
 {
-  openrouter_api_key = "YOUR_API_KEY", -- or set OPENROUTER_API_KEY environment variable
-  model = "qwen/qwen-2.5-72b-instruct:free", -- default model
-  auto_push = false, -- whether to automatically push after commit
-  commit_prompt_template = "Custom commit message prompt. Git diff: %s Resent commits: %s", -- template for commit message generation
+  model = "google/gemini-2.0-flash-001", -- (optional) OpenRouter model to use
+  auto_push = false, -- (optional) Automatically git push after committing
+  commit_prompt_template = [[
+    You are to generate multiple, different git commit messages based on the following git diff.
+    Format: type(scope): subject
+    Git diff: <git_diff/>
+    Recent commits: <recent_commits/>
+  ]], -- (optional) Prompt template for commit message generation
+  system_prompt = [[
+    You are a commit message writer for git...
+  ]], -- (optional) System prompt, for advanced customization
 }
+```
+
+## Customizing the Prompt Template
+
+You can provide your own prompt template, using the following placeholders:
+
+- <git_diff/> — Will be replaced with the output of git diff --cached
+- <recent_commits/> — Will be replaced with the latest commits (from git log)
+You can omit any placeholder you don’t want.
+
+Example:
+
+```lua
+  commit_prompt_template = [[
+    Please write several git commit messages using the conventional format.
+    DIFF:
+    <git_diff/>
+    RECENT:
+    <recent_commits/>
+  ]],
 ```
 
 ## Usage
 
-1. Stage your changes using git add
-2. Run `:AICommit` command
-3. Wait for AI to generate commit messages
-4. Choose from the suggested messages in the dropdown window
-5. The selected message will be used for the commit
+1. Stage your changes:
+git add <files> (or use your favorite plugin)
+2. Generate commit messages:
+Run :AICommit
+3. Pick a message:
+A Telescope picker will appear with several commit suggestions. Preview each with the right pane, then select one to commit.
+4. (Optional) Push automatically:
+Enable auto_push in your config to push right after the commit.
 
 ## Commands
 
 - `:AICommit` - Start the commit message generation process
+- `:AICommitLast` - Show the last batch of generated commit suggestions (for re-selection)
