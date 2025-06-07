@@ -12,10 +12,10 @@ Format:
 - Do NOT use quotes or backticks.
 
 Git diff:
-%s
+<git_diff/>
 
 Recent commits:
-%s
+<recent_commits/>
 ]]
 
 local default_system_prompt = [[
@@ -82,7 +82,18 @@ end
 local function create_prompt(git_data, template)
   template = template or default_commit_prompt_template
 
-  return string.format(template, git_data.diff, git_data.commits)
+  local replacements = {
+    ["<git_diff/>"] = git_data.diff or "",
+    ["<recent_commits/>"] = git_data.commits or "",
+  }
+
+  for placeholder, value in pairs(replacements) do
+    template = template:gsub(placeholder, value)
+  end
+
+  template = template:gsub("<[%w_]+/>", "")
+
+  return template
 end
 
 local function prepare_request_data(prompt, system_prompt, model)
