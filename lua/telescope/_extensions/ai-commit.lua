@@ -1,16 +1,14 @@
-local telescope = require("telescope")
+local telescope = require "telescope"
 
 local function setup_opts(opts)
-  local themes = require("telescope.themes")
   opts = opts or {}
-  if opts.theme == nil then
-    opts = themes.get_dropdown(opts)
-  end
+  opts.layout_strategy = "horizontal"
+  opts.layout_config = opts.layout_config or { width = 0.7 }
   return opts
 end
 
 local function push_changes()
-  local Job = require("plenary.job")
+  local Job = require "plenary.job"
 
   vim.notify("Pushing changes...", vim.log.levels.INFO)
   Job:new({
@@ -32,7 +30,7 @@ local function commit_changes(message)
     vim.api.nvim_buf_set_lines(0, 0, 0, false, lines)
     vim.notify("Commit message pasted to buffer", vim.log.levels.INFO)
   else
-    local Job = require("plenary.job")
+    local Job = require "plenary.job"
 
     Job:new({
       command = "git",
@@ -52,26 +50,55 @@ local function commit_changes(message)
 end
 
 local function create_commit_picker(opts)
-  local pickers = require("telescope.pickers")
-  local finders = require("telescope.finders")
+  local pickers = require "telescope.pickers"
+  local finders = require "telescope.finders"
   local conf = require("telescope.config").values
-  local actions = require("telescope.actions")
-  local action_state = require("telescope.actions.state")
+  local actions = require "telescope.actions"
+  local action_state = require "telescope.actions.state"
+  local previewers = require "telescope.previewers"
 
   opts = setup_opts(opts)
+  local messages = opts.messages or {}
+
+  local entry_maker = function(msg)
+    local subject = vim.split(msg, "\n")[1] or msg
+    return {
+      value = msg,
+      display = subject,
+      ordinal = subject,
+    }
+  end
 
   pickers
     .new(opts, {
       prompt_title = "AI Commit Messages",
-      finder = finders.new_table({ results = opts.messages or {} }),
-      previewer = false,
+      finder = finders.new_table {
+        results = messages,
+        entry_maker = entry_maker,
+      },
+      previewer = previewers.new_buffer_previewer {
+        title = "Commit Message",
+        define_preview = function(self, entry)
+          local lines = vim.split(entry.value, "\n")
+          vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+          vim.api.nvim_buf_set_option(self.state.bufnr, "filetype", "gitcommit")
+          vim.api.nvim_buf_set_option(self.state.bufnr, "modifiable", false)
+          vim.schedule(function()
+            local win = self.state.winid
+            if win and vim.api.nvim_win_is_valid(win) then
+              vim.api.nvim_win_set_option(win, "wrap", true)
+              vim.api.nvim_win_set_option(win, "linebreak", true)
+            end
+          end)
+        end,
+      },
       sorter = conf.generic_sorter(opts),
       attach_mappings = function(prompt_bufnr)
         actions.select_default:replace(function()
           local selection = action_state.get_selected_entry()
           actions.close(prompt_bufnr)
-          if selection and selection[1] then
-            commit_changes(selection[1])
+          if selection and selection.value then
+            commit_changes(selection.value)
           else
             vim.notify("No commit message selected", vim.log.levels.WARN)
           end
@@ -82,6 +109,6 @@ local function create_commit_picker(opts)
     :find()
 end
 
-return telescope.register_extension({
+return telescope.register_extension {
   exports = { commit = create_commit_picker },
-})
+}

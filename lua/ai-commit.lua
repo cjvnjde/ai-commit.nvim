@@ -4,6 +4,7 @@ M.config = {
   model = nil,
   auto_push = false,
   commit_prompt_template = nil,
+  system_prompt = nil,
 }
 
 M.setup = function(opts)
@@ -19,9 +20,9 @@ end
 M.show_commit_suggestions = function(messages)
   local has_telescope, _ = pcall(require, "telescope")
   if not has_telescope then
-    error("This plugin requires nvim-telescope/telescope.nvim")
+    error "This plugin requires nvim-telescope/telescope.nvim"
   end
-  require("telescope").extensions["ai-commit"].commit({ messages = messages })
+  require("telescope").extensions["ai-commit"].commit { messages = messages }
 end
 
 vim.api.nvim_create_user_command("AICommit", function()

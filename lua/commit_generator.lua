@@ -2,26 +2,54 @@ local M = {}
 
 local openrouter_api_endpoint = "https://openrouter.ai/api/v1/chat/completions"
 local default_commit_prompt_template = [[
-Generate 5 different git commit messages based on the following git diff:
+You are to generate multiple, different git commit messages based on the following git diff.
 
-Use the conventional commit format: type(scope): concise description
-Analyze the entire diff and identify different aspects of the changes (new features, bug fixes, refactoring, etc.)
-For each message, focus on a different significant aspect of the changes
-Return ONLY the commit messages - no introduction, no quotes, and no explanations
-Each message should be concise, stating only WHAT was done, not WHY
-Each message should have a single type and scope, focusing on one aspect of the changes
-
-Examples of good diverse commit messages for the same diff:
-feat(auth): implement user login functionality
-fix(validation): correct email format validation
-refactor(api): restructure authentication routes
-style(forms): standardize input field appearance
-test(auth): add unit tests for authentication flow
+Format:
+- Each message must follow the Conventional Commits standard (type(scope): subject).
+- If a longer explanation is needed, add a body after a blank line, explaining WHAT and WHY.
+- Output at least 3–5 different commit messages, each focusing on a different significant aspect or perspective of the changes.
+- Separate each commit message with the separator: --- END COMMIT ---
+- Do NOT use quotes or backticks.
 
 Git diff:
 %s
+
 Recent commits:
 %s
+]]
+
+local default_system_prompt = [[
+You are a commit message writer for git. Your task is to generate multiple, distinct, high-quality commit messages following the Conventional Commits standard (types: feat, fix, build, chore, ci, docs, style, refactor, perf, test). Always output at least 3–5 different options, each reflecting a different possible focus or aspect of the changes, so the user can choose the most suitable one.
+
+For each commit message:
+
+- Use the format: type(scope): concise subject line
+  The scope is optional, but recommended if it clarifies the context.
+- Use the present tense and keep subject lines under 74 characters
+- If needed, add a body after a blank line. In the body, explain WHAT was changed and, if relevant, briefly explain WHY the changes were made. Be clear but concise; don't start with "This commit..."
+- Each option should capture a different angle or purpose: e.g., focus on features, bug fixes, refactoring, or testing.
+- Do NOT use quotes, backticks, or code formatting. Output only commit messages.
+
+**Separator:** After each commit message (including body, if present), write the separator line exactly as follows:
+--- END COMMIT ---
+
+Never add any other explanation, commentary, or formatting outside the commit messages and separator.
+
+Your output should look like this:
+
+type(scope): short summary
+
+Longer body if needed, explaining what and why.
+
+--- END COMMIT ---
+
+type(other_scope): another summary
+
+Another body.
+
+--- END COMMIT ---
+
+(etc.)
 ]]
 
 local function validate_api_key()
@@ -57,14 +85,16 @@ local function create_prompt(git_data, template)
   return string.format(template, git_data.diff, git_data.commits)
 end
 
-local function prepare_request_data(prompt, model)
+local function prepare_request_data(prompt, system_prompt, model)
+  system_prompt = system_prompt or default_system_prompt
+
   return {
     model = model,
     max_tokens = 4096,
     messages = {
       {
         role = "system",
-        content = "You are an assistant that generates git commit messages based on user instructions, analyzing git diffs and commit history. Follow the user's requirements closely for output style, formatting, and level of detail.",
+        content = system_prompt,
       },
       {
         role = "user",
@@ -74,7 +104,17 @@ local function prepare_request_data(prompt, model)
   }
 end
 
--- TODO: Refactor this
+local function parse_commit_messages(text)
+  local messages = {}
+  for msg in text:gmatch "(.-)%s*%-%-%- END COMMIT %-%-%-" do
+    msg = msg:gsub("^%s+", ""):gsub("%s+$", "")
+    if msg ~= "" then
+      table.insert(messages, msg)
+    end
+  end
+  return messages
+end
+
 local function handle_api_response(response)
   if response.status == 200 then
     local data = vim.json.decode(response.body)
@@ -82,9 +122,8 @@ local function handle_api_response(response)
 
     if data.choices and #data.choices > 0 and data.choices[1].message and data.choices[1].message.content then
       local message_content = data.choices[1].message.content
-      for msg in message_content:gmatch "[^\n]+" do
-        table.insert(messages, msg)
-      end
+
+      messages = parse_commit_messages(message_content)
 
       if #messages > 0 then
         require("ai-commit").show_commit_suggestions(messages)
@@ -165,8 +204,10 @@ function M.generate_commit(config)
   end
 
   local template = config.commit_prompt_template or default_commit_prompt_template
+  local system_prompt = config.system_prompt or default_system_prompt
+
   local prompt = create_prompt(git_data, template)
-  local data = prepare_request_data(prompt, config.model)
+  local data = prepare_request_data(prompt, system_prompt, config.model)
 
   send_api_request(api_key, data)
 end
