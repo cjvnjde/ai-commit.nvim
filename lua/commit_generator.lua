@@ -28,10 +28,7 @@ local function validate_api_key()
   local api_key = vim.env.OPENROUTER_API_KEY
 
   if not api_key then
-    vim.notify(
-      "OpenRouter API key not found. Please set OPENROUTER_API_KEY environment variable",
-      vim.log.levels.ERROR
-    )
+    vim.notify("OpenRouter API key not found. Please set OPENROUTER_API_KEY environment variable", vim.log.levels.ERROR)
     return nil
   end
 
@@ -39,14 +36,14 @@ local function validate_api_key()
 end
 
 local function collect_git_data()
-  local diff_context = vim.fn.system("git -P diff --cached -U10")
+  local diff_context = vim.fn.system "git -P diff --cached -U10"
 
   if diff_context == "" then
     vim.notify("No staged changes found. Add files with 'git add' first.", vim.log.levels.ERROR)
     return nil
   end
 
-  local recent_commits = vim.fn.system("git log --oneline -n 5")
+  local recent_commits = vim.fn.system "git log --oneline -n 5"
 
   return {
     diff = diff_context,
@@ -63,10 +60,11 @@ end
 local function prepare_request_data(prompt, model)
   return {
     model = model,
+    max_tokens = 4096,
     messages = {
       {
         role = "system",
-        content = "You are a helpful assistant that generates git commit messages following the conventional commits specification.",
+        content = "You are an assistant that generates git commit messages based on user instructions, analyzing git diffs and commit history. Follow the user's requirements closely for output style, formatting, and level of detail.",
       },
       {
         role = "user",
@@ -84,7 +82,7 @@ local function handle_api_response(response)
 
     if data.choices and #data.choices > 0 and data.choices[1].message and data.choices[1].message.content then
       local message_content = data.choices[1].message.content
-      for msg in message_content:gmatch("[^\n]+") do
+      for msg in message_content:gmatch "[^\n]+" do
         table.insert(messages, msg)
       end
 
