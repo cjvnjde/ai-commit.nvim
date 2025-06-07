@@ -15,11 +15,13 @@ local function push_changes()
     command = "git",
     args = { "push" },
     on_exit = function(_, return_val)
-      if return_val == 0 then
-        vim.notify("Changes pushed successfully!", vim.log.levels.INFO)
-      else
-        vim.notify("Failed to push changes", vim.log.levels.ERROR)
-      end
+      vim.schedule(function()
+        if return_val == 0 then
+          vim.notify("Changes pushed successfully!", vim.log.levels.INFO)
+        else
+          vim.notify("Failed to push changes", vim.log.levels.ERROR)
+        end
+      end)
     end,
   }):start()
 end
@@ -36,14 +38,16 @@ local function commit_changes(message)
       command = "git",
       args = { "commit", "-m", message },
       on_exit = function(_, return_val)
-        if return_val == 0 then
-          vim.notify("Commit created successfully!", vim.log.levels.INFO)
-          if require("ai-commit").config.auto_push then
-            push_changes()
+        vim.schedule(function()
+          if return_val == 0 then
+            vim.notify("Commit created successfully!", vim.log.levels.INFO)
+            if require("ai-commit").config.auto_push then
+              push_changes()
+            end
+          else
+            vim.notify("Failed to create commit", vim.log.levels.ERROR)
           end
-        else
-          vim.notify("Failed to create commit", vim.log.levels.ERROR)
-        end
+        end)
       end,
     }):start()
   end
