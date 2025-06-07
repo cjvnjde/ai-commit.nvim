@@ -1,8 +1,7 @@
 local M = {}
 
 local openrouter_api_endpoint = "https://openrouter.ai/api/v1/chat/completions"
--- TODO: Make commit message template configurable
-local commit_prompt_template = [[
+local default_commit_prompt_template = [[
 Generate 5 different git commit messages based on the following git diff:
 
 Use the conventional commit format: type(scope): concise description
@@ -25,15 +24,17 @@ Recent commits:
 %s
 ]]
 
-local function validate_api_key(config)
-  local api_key = config.openrouter_api_key or vim.env.OPENROUTER_API_KEY
+local function validate_api_key()
+  local api_key = vim.env.OPENROUTER_API_KEY
+
   if not api_key then
     vim.notify(
-      "OpenRouter API key not found. Please set OPENROUTER_API_KEY environment variable or configure openrouter_api_key in your config",
+      "OpenRouter API key not found. Please set OPENROUTER_API_KEY environment variable",
       vim.log.levels.ERROR
     )
     return nil
   end
+
   return api_key
 end
 
@@ -53,8 +54,10 @@ local function collect_git_data()
   }
 end
 
-local function create_prompt(git_data)
-  return string.format(commit_prompt_template, git_data.diff, git_data.commits)
+local function create_prompt(git_data, template)
+  template = template or default_commit_prompt_template
+
+  return string.format(template, git_data.diff, git_data.commits)
 end
 
 local function prepare_request_data(prompt, model)
@@ -151,17 +154,20 @@ local function send_api_request(api_key, data)
 end
 
 function M.generate_commit(config)
-  local api_key = validate_api_key(config)
+  local api_key = validate_api_key()
+
   if not api_key then
     return
   end
 
   local git_data = collect_git_data()
+
   if not git_data then
     return
   end
 
-  local prompt = create_prompt(git_data)
+  local template = config.commit_prompt_template or default_commit_prompt_template
+  local prompt = create_prompt(git_data, template)
   local data = prepare_request_data(prompt, config.model)
 
   send_api_request(api_key, data)

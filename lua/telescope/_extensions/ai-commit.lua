@@ -27,22 +27,28 @@ local function push_changes()
 end
 
 local function commit_changes(message)
-  local Job = require("plenary.job")
+  if vim.bo.filetype == "gitcommit" then
+    local lines = vim.split(message, "\n")
+    vim.api.nvim_buf_set_lines(0, 0, 0, false, lines)
+    vim.notify("Commit message pasted to buffer", vim.log.levels.INFO)
+  else
+    local Job = require("plenary.job")
 
-  Job:new({
-    command = "git",
-    args = { "commit", "-m", message },
-    on_exit = function(_, return_val)
-      if return_val == 0 then
-        vim.notify("Commit created successfully!", vim.log.levels.INFO)
-        if require("ai-commit").config.auto_push then
-          push_changes()
+    Job:new({
+      command = "git",
+      args = { "commit", "-m", message },
+      on_exit = function(_, return_val)
+        if return_val == 0 then
+          vim.notify("Commit created successfully!", vim.log.levels.INFO)
+          if require("ai-commit").config.auto_push then
+            push_changes()
+          end
+        else
+          vim.notify("Failed to create commit", vim.log.levels.ERROR)
         end
-      else
-        vim.notify("Failed to create commit", vim.log.levels.ERROR)
-      end
-    end,
-  }):start()
+      end,
+    }):start()
+  end
 end
 
 local function create_commit_picker(opts)

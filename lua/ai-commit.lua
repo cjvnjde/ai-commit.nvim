@@ -1,9 +1,9 @@
 local M = {}
 
 M.config = {
-  openrouter_api_key = nil,
-  model = "qwen/qwen-2.5-72b-instruct:free",
+  model = nil,
   auto_push = false,
+  commit_prompt_template = nil,
 }
 
 M.setup = function(opts)
