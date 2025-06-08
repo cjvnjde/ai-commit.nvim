@@ -59,7 +59,7 @@ You can configure the plugin in your setup call. Here are all the available opti
 
 ```lua
 {
-  model = "google/gemini-2.0-flash-001", -- (optional) OpenRouter model to use
+  model = "google/gemini-2.0-flash-001", -- (required) OpenRouter model to use
   auto_push = false, -- (optional) Automatically git push after committing
   commit_prompt_template = [[
     You are to generate multiple, different git commit messages based on the following git diff.
