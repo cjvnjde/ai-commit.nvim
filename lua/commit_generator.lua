@@ -63,12 +63,75 @@ local function validate_api_key()
   return api_key
 end
 
-local function collect_git_data()
+local function split_diff_by_file(diff)
+  local hunks = {}
+  local current_hunk = {}
+  local current_file = nil
+
+  for line in diff:gmatch "([^\n]*)\n?" do
+    if line:match "^diff%s+--git" then
+      if current_file and #current_hunk > 0 then
+        table.insert(hunks, { filename = current_file, hunk = table.concat(current_hunk, "\n") })
+      end
+      current_hunk = { line }
+      current_file = nil
+    elseif line:match "^%+%+%+ b/" then
+      local file = line:match "^%+%+%+ b/(.+)"
+      if not file or file == "/dev/null" then
+        for i = #current_hunk, 1, -1 do
+          local prev = current_hunk[i]
+          local a_file = prev and prev:match "^--- a/(.+)"
+          if a_file and a_file ~= "/dev/null" then
+            file = a_file
+            break
+          end
+        end
+      end
+      current_file = file
+      table.insert(current_hunk, line)
+    elseif #current_hunk > 0 then
+      table.insert(current_hunk, line)
+    end
+  end
+
+  if current_file and #current_hunk > 0 then
+    table.insert(hunks, { filename = current_file, hunk = table.concat(current_hunk, "\n") })
+  end
+
+  return hunks
+end
+
+local function is_file_ignored(filename, ignored)
+  for _, pattern in ipairs(ignored or {}) do
+    if filename == pattern or filename:match(pattern) then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function collect_git_data(config)
   local diff_context = vim.fn.system "git -P diff --cached -U10"
 
   if diff_context == "" then
     vim.notify("No staged changes found. Add files with 'git add' first.", vim.log.levels.ERROR)
     return nil
+  end
+
+  local ignored_files = config and config.ignored_files or {}
+
+  if #ignored_files > 0 then
+    local hunks = split_diff_by_file(diff_context)
+    local filtered = {}
+
+    for _, h in ipairs(hunks) do
+      if not is_file_ignored(h.filename or "", ignored_files) then
+        table.insert(filtered, h.hunk)
+      end
+    end
+
+    diff_context = table.concat(filtered, "\n")
   end
 
   local recent_commits = vim.fn.system "git log --oneline -n 5"
@@ -208,7 +271,7 @@ function M.generate_commit(config)
     return
   end
 
-  local git_data = collect_git_data()
+  local git_data = collect_git_data(config)
 
   if not git_data then
     return

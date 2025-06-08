@@ -70,6 +70,7 @@ You can configure the plugin in your setup call. Here are all the available opti
   system_prompt = [[
     You are a commit message writer for git...
   ]], -- (optional) System prompt, for advanced customization
+  ignored_files = { "package-lock.json" }, -- (optional) An array of file names or Lua patterns. Any matching file will be excluded from the diff used for commit message generation.
 }
 ```
 

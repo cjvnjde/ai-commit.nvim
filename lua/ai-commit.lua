@@ -5,6 +5,7 @@ M.config = {
   auto_push = false,
   commit_prompt_template = nil,
   system_prompt = nil,
+  ignored_files = {},
 }
 
 M.last_commit_messages = nil
