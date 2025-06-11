@@ -1,6 +1,11 @@
 local M = {}
 
 M.config = {
+  env = {
+    api_key = nil,
+    url = nil,
+    chat_url = nil,
+  },
   model = nil,
   auto_push = false,
   commit_prompt_template = nil,

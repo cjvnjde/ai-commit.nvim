@@ -59,6 +59,11 @@ You can configure the plugin in your setup call. Here are all the available opti
 
 ```lua
 {
+  env = {
+    api_key = os.getenv("OPENROUTER_API_KEY"),
+    url = "https://openrouter.ai/api/v1",
+    chat_url = "/chat/completions",
+  },
   model = "google/gemini-2.0-flash-001", -- (required) OpenRouter model to use
   auto_push = false, -- (optional) Automatically git push after committing
   commit_prompt_template = [[
@@ -73,6 +78,17 @@ You can configure the plugin in your setup call. Here are all the available opti
   ignored_files = { "package-lock.json" }, -- (optional) An array of file names or Lua patterns. Any matching file will be excluded from the diff used for commit message generation.
 }
 ```
+
+| Option                   | Type      | Default    | Description                                                                          |
+| ------------------------ | --------- | ---------- | ------------------------------------------------------------------------------------ |
+| `env.api_key`            | string    | (required) | OpenRouter API key (`OPENROUTER_API_KEY` environment variable recommended)           |
+| `env.url`                | string    | (required) | OpenRouter base API URL                                                              |
+| `env.chat_url`           | string    | (required) | API path for chat/completions                                                        |
+| `model`                  | string    | (required) | OpenRouter model ID                                                                  |
+| `auto_push`              | boolean   | false      | Push to remote after committing                                                      |
+| `commit_prompt_template` | string    | see below  | Template for the user prompt sent to AI (see Placeholders)                           |
+| `system_prompt`          | string    | see below  | System prompt for AI (defines commit style, count, format, etc.)                     |
+| `ignored_files`          | string[]  | `{}`       | List of file names or Lua patterns to ignore from diff for commit message generation |
 
 ## Customizing the Prompt Template
 

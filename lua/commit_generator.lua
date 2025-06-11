@@ -1,6 +1,5 @@
 local M = {}
 
-local openrouter_api_endpoint = "https://openrouter.ai/api/v1/chat/completions"
 local default_commit_prompt_template = [[
 You are to generate multiple, different git commit messages based on the following git diff.
 
@@ -52,9 +51,7 @@ Another body.
 (etc.)
 ]]
 
-local function validate_api_key()
-  local api_key = vim.env.OPENROUTER_API_KEY
-
+local function validate_api_key(api_key)
   if not api_key then
     vim.notify("OpenRouter API key not found. Please set OPENROUTER_API_KEY environment variable", vim.log.levels.ERROR)
     return nil
@@ -249,23 +246,27 @@ local function handle_api_response(response)
   end
 end
 
-local function send_api_request(api_key, data)
+local create_ai_endpoint = function(config)
+  return config.env.url .. config.env.chat_url
+end
+
+local function send_api_request(endpoint, data)
   vim.schedule(function()
     vim.notify("Generating commit message...", vim.log.levels.INFO)
   end)
 
-  require("plenary.curl").post(openrouter_api_endpoint, {
+  require("plenary.curl").post(endpoint, {
     headers = {
       content_type = "application/json",
-      authorization = "Bearer " .. api_key,
+      authorization = "Bearer " .. data.api_key,
     },
-    body = vim.json.encode(data),
+    body = vim.json.encode(data.body),
     callback = vim.schedule_wrap(handle_api_response),
   })
 end
 
 function M.generate_commit(config)
-  local api_key = validate_api_key()
+  local api_key = validate_api_key(config.env.api_key)
 
   if not api_key then
     return
@@ -283,7 +284,12 @@ function M.generate_commit(config)
   local prompt = create_prompt(git_data, template)
   local data = prepare_request_data(prompt, system_prompt, config.model)
 
-  send_api_request(api_key, data)
+  local endpoint = create_ai_endpoint(config)
+
+  send_api_request(endpoint, {
+    api_key = api_key,
+    body = data,
+  })
 end
 
 return M
