@@ -21,8 +21,8 @@ M.setup = function(opts)
   end
 end
 
-M.generate_commit = function()
-  require("commit_generator").generate_commit(M.config)
+M.generate_commit = function(extra_prompt)
+  require("commit_generator").generate_commit(M.config, extra_prompt)
 end
 
 M.show_commit_suggestions = function(messages)
@@ -45,9 +45,11 @@ M.show_last_commit_suggestions = function()
   end
 end
 
-vim.api.nvim_create_user_command("AICommit", function()
-  M.generate_commit()
-end, {})
+vim.api.nvim_create_user_command("AICommit", function(opts)
+  M.generate_commit(opts.args)
+end, {
+  nargs = "?",
+})
 
 vim.api.nvim_create_user_command("AICommitLast", function()
   M.show_last_commit_suggestions()

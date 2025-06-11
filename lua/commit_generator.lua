@@ -10,6 +10,8 @@ Format:
 - Separate each commit message with the separator: --- END COMMIT ---
 - Do NOT use quotes or backticks.
 
+<extra_prompt/>
+
 Git diff:
 <git_diff/>
 
@@ -139,12 +141,13 @@ local function collect_git_data(config)
   }
 end
 
-local function create_prompt(git_data, template)
+local function create_prompt(git_data, template, extra_prompt)
   template = template or default_commit_prompt_template
 
   local replacements = {
     ["<git_diff/>"] = git_data.diff or "",
     ["<recent_commits/>"] = git_data.commits or "",
+    ["<extra_prompt/>"] = extra_prompt or "",
   }
 
   for placeholder, value in pairs(replacements) do
@@ -265,7 +268,7 @@ local function send_api_request(endpoint, data)
   })
 end
 
-function M.generate_commit(config)
+function M.generate_commit(config, extra_prompt)
   local api_key = validate_api_key(config.env.api_key)
 
   if not api_key then
@@ -281,7 +284,7 @@ function M.generate_commit(config)
   local template = config.commit_prompt_template or default_commit_prompt_template
   local system_prompt = config.system_prompt or default_system_prompt
 
-  local prompt = create_prompt(git_data, template)
+  local prompt = create_prompt(git_data, template, extra_prompt)
   local data = prepare_request_data(prompt, system_prompt, config.model)
 
   local endpoint = create_ai_endpoint(config)

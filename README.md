@@ -115,7 +115,9 @@ Example:
 1. Stage your changes:
 git add <files> (or use your favorite plugin)
 2. Generate commit messages:
-Run :AICommit
+Run `:AICommit`
+Optionally, you can add extra instructions for the AI (e.g. to set the tone or mention special requirements) by passing them as arguments:
+`:AICommit improve focus on refactoring and avoid mentioning tests`
 3. Pick a message:
 A Telescope picker will appear with several commit suggestions. Preview each with the right pane, then select one to commit.
 4. (Optional) Push automatically:
@@ -123,5 +125,5 @@ Enable auto_push in your config to push right after the commit.
 
 ## Commands
 
-- `:AICommit` - Start the commit message generation process
+- `:AICommit [extra prompt] - Start the commit message generation process
 - `:AICommitLast` - Show the last batch of generated commit suggestions (for re-selection)
