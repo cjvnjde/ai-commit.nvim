@@ -97,6 +97,7 @@ You can provide your own prompt template, using the following placeholders:
 - <git_diff/> — Will be replaced with the output of git diff --cached
 - <recent_commits/> — Will be replaced with the latest commits (from git log)
 You can omit any placeholder you don’t want.
+- <extra_prompt/> — Will be replaced with any extra instructions you provide when running the command (e.g. `:AICommit improve focus on refactoring and avoid mentioning tests`)
 
 Example:
 
@@ -125,5 +126,5 @@ Enable auto_push in your config to push right after the commit.
 
 ## Commands
 
-- `:AICommit [extra prompt] - Start the commit message generation process
+- `:AICommit [extra prompt]` - Start the commit message generation process
 - `:AICommitLast` - Show the last batch of generated commit suggestions (for re-selection)
