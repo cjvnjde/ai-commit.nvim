@@ -11,6 +11,7 @@ M.config = {
   commit_prompt_template = nil,
   system_prompt = nil,
   ignored_files = {},
+  debug = false,
 }
 
 M.last_commit_messages = nil

@@ -253,6 +253,29 @@ local create_ai_endpoint = function(config)
   return config.env.url .. config.env.chat_url
 end
 
+local function save_debug_prompt(prompt, system_prompt)
+  local debug_dir = vim.fn.stdpath "cache" .. "/ai-commit-debug"
+  vim.fn.mkdir(debug_dir, "p")
+
+  local timestamp = os.date "%Y%m%d_%H%M%S"
+  local debug_file = debug_dir .. "/prompt_" .. timestamp .. ".txt"
+
+  local content = "=== SYSTEM PROMPT ===\n" .. (system_prompt or "") .. "\n\n=== USER PROMPT ===\n" .. prompt
+
+  local file = io.open(debug_file, "w")
+  if file then
+    file:write(content)
+    file:close()
+    vim.schedule(function()
+      vim.notify("Debug: Prompt saved to " .. debug_file, vim.log.levels.INFO)
+    end)
+  else
+    vim.schedule(function()
+      vim.notify("Debug: Failed to save prompt to " .. debug_file, vim.log.levels.WARN)
+    end)
+  end
+end
+
 local function send_api_request(endpoint, data)
   vim.schedule(function()
     vim.notify("Generating commit message...", vim.log.levels.INFO)
@@ -286,6 +309,10 @@ function M.generate_commit(config, extra_prompt)
 
   local prompt = create_prompt(git_data, template, extra_prompt)
   local data = prepare_request_data(prompt, system_prompt, config.model)
+
+  if config.debug then
+    save_debug_prompt(prompt, system_prompt)
+  end
 
   local endpoint = create_ai_endpoint(config)
 

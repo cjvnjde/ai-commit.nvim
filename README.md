@@ -76,6 +76,7 @@ You can configure the plugin in your setup call. Here are all the available opti
     You are a commit message writer for git...
   ]], -- (optional) System prompt, for advanced customization
   ignored_files = { "package-lock.json" }, -- (optional) An array of file names or Lua patterns. Any matching file will be excluded from the diff used for commit message generation.
+  debug = false, -- (optional) Save prompts to cache directory for debugging
 }
 ```
 
@@ -89,6 +90,7 @@ You can configure the plugin in your setup call. Here are all the available opti
 | `commit_prompt_template` | string    | see below  | Template for the user prompt sent to AI (see Placeholders)                           |
 | `system_prompt`          | string    | see below  | System prompt for AI (defines commit style, count, format, etc.)                     |
 | `ignored_files`          | string[]  | `{}`       | List of file names or Lua patterns to ignore from diff for commit message generation |
+| `debug`                  | boolean   | false      | Save prompts to cache directory for debugging purposes                                |
 
 ## Customizing the Prompt Template
 
