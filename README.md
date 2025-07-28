@@ -9,15 +9,18 @@ A Neovim plugin that uses AI to generate high-quality, conventional commit messa
 
 ## Features
 
-- Generate commit messages based on staged changes
-- Multiple AI-generated commit suggestions
-- Clean and minimal dropdown interface
-- Follows conventional commit format
-- Optional automatic push after commit
-- Remembers last suggestions so you can recall them
-- Works in gitcommit buffers:
-If you run :AICommit inside a `gitcommit` file (e.g., opened by :G commit or via git commit in terminal), the selected AI message will be inserted at the very top of your buffer—no manual copy-paste required.
-- Asynchronous message generation without UI blocking
+- **AI-powered commit messages** - Generate multiple commit message suggestions based on your staged changes
+- **Conventional commits** - Follows conventional commit format with proper type, scope, and description
+- **Telescope integration** - Clean, minimal dropdown interface for selecting commit messages
+- **Flexible configuration** - Customizable prompts, models, and behavior
+- **Smart diff handling** - Automatic truncation of large diffs to avoid token limits
+- **File filtering** - Ignore specific files or patterns (e.g., `package-lock.json`, `*.log`) from commit analysis
+- **Error resilience** - Robust error handling for git operations and API calls
+- **Auto-push support** - Optional automatic push after successful commit
+- **Session memory** - Remembers last suggestions for easy re-selection
+- **Gitcommit buffer support** - Seamlessly works in git commit buffers
+- **Asynchronous processing** - Non-blocking AI generation with progress feedback
+- **Debug mode** - Save prompts to cache for troubleshooting and fine-tuning
 
 ## Prerequisites
 
@@ -47,10 +50,25 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 The plugin requires an OpenRouter API key for AI generation.
 
+### Option 1: Environment Variable (Recommended)
+
 Set your API key as an environment variable before launching Neovim:
 
 ```bash
 export OPENROUTER_API_KEY=sk-...
+```
+
+### Option 2: Configuration
+
+Alternatively, you can set it directly in your configuration:
+
+```lua
+{
+  env = {
+    api_key = "sk-your-api-key-here",
+  },
+  -- ... other options
+}
 ```
 
 ## Configuration
@@ -60,37 +78,41 @@ You can configure the plugin in your setup call. Here are all the available opti
 ```lua
 {
   env = {
-    api_key = os.getenv("OPENROUTER_API_KEY"),
-    url = "https://openrouter.ai/api/v1",
-    chat_url = "/chat/completions",
+    api_key = nil, -- Will fallback to OPENROUTER_API_KEY env var
+    url = "https://openrouter.ai/api/v1/", -- Default OpenRouter URL
+    chat_url = "chat/completions", -- Default chat endpoint
   },
-  model = "google/gemini-2.0-flash-001", -- (required) OpenRouter model to use
-  auto_push = false, -- (optional) Automatically git push after committing
+  model = "google/gemini-2.5-flash", -- Default AI model
+  auto_push = false, -- Automatically git push after committing
+  max_tokens = 4096, -- Maximum tokens for AI response (nil = no limit)
+  max_diff_length = nil, -- Truncate large diffs to avoid token limits (nil = no limit)
   commit_prompt_template = [[
     You are to generate multiple, different git commit messages based on the following git diff.
     Format: type(scope): subject
     Git diff: <git_diff/>
     Recent commits: <recent_commits/>
-  ]], -- (optional) Prompt template for commit message generation
+  ]], -- Custom prompt template (optional)
   system_prompt = [[
     You are a commit message writer for git...
-  ]], -- (optional) System prompt, for advanced customization
-  ignored_files = { "package-lock.json" }, -- (optional) An array of file names or Lua patterns. Any matching file will be excluded from the diff used for commit message generation.
-  debug = false, -- (optional) Save prompts to cache directory for debugging
+  ]], -- Custom system prompt (optional)
+  ignored_files = { "package-lock.json", "*.log" }, -- Files/patterns to exclude from diff
+  debug = false, -- Save prompts to cache directory for debugging
 }
 ```
 
-| Option                   | Type      | Default    | Description                                                                          |
-| ------------------------ | --------- | ---------- | ------------------------------------------------------------------------------------ |
-| `env.api_key`            | string    | (required) | OpenRouter API key (`OPENROUTER_API_KEY` environment variable recommended)           |
-| `env.url`                | string    | (required) | OpenRouter base API URL                                                              |
-| `env.chat_url`           | string    | (required) | API path for chat/completions                                                        |
-| `model`                  | string    | (required) | OpenRouter model ID                                                                  |
-| `auto_push`              | boolean   | false      | Push to remote after committing                                                      |
-| `commit_prompt_template` | string    | see below  | Template for the user prompt sent to AI (see Placeholders)                           |
-| `system_prompt`          | string    | see below  | System prompt for AI (defines commit style, count, format, etc.)                     |
-| `ignored_files`          | string[]  | `{}`       | List of file names or Lua patterns to ignore from diff for commit message generation |
-| `debug`                  | boolean   | false      | Save prompts to cache directory for debugging purposes                                |
+| Option                   | Type      | Default                        | Description                                                                          |
+| ------------------------ | --------- | ------------------------------ | ------------------------------------------------------------------------------------ |
+| `env.api_key`            | string    | nil (uses env var)             | OpenRouter API key (automatically uses `OPENROUTER_API_KEY` if not set)             |
+| `env.url`                | string    | "<https://openrouter.ai/api/v1/>" | OpenRouter base API URL                                                              |
+| `env.chat_url`           | string    | "chat/completions"             | API path for chat/completions                                                        |
+| `model`                  | string    | "anthropic/claude-3.5-sonnet"  | OpenRouter model ID                                                                  |
+| `auto_push`              | boolean   | false                          | Push to remote after committing                                                      |
+| `max_tokens`             | number    | 4096                           | Maximum tokens for AI response (nil disables limit)                                 |
+| `max_diff_length`        | number    | nil (no limit)                 | Truncate diffs longer than this to avoid token limits (nil disables limit)          |
+| `commit_prompt_template` | string    | see below                      | Template for the user prompt sent to AI (see Placeholders)                          |
+| `system_prompt`          | string    | see below                      | System prompt for AI (defines commit style, count, format, etc.)                    |
+| `ignored_files`          | string[]  | `{}`                           | List of file names or glob patterns to ignore from diff (supports `*.ext`, `dir/*`) |
+| `debug`                  | boolean   | false                          | Save prompts to cache directory for debugging purposes                               |
 
 ## Customizing the Prompt Template
 
@@ -115,16 +137,58 @@ Example:
 
 ## Usage
 
-1. Stage your changes:
-git add <files> (or use your favorite plugin)
-2. Generate commit messages:
-Run `:AICommit`
-Optionally, you can add extra instructions for the AI (e.g. to set the tone or mention special requirements) by passing them as arguments:
-`:AICommit improve focus on refactoring and avoid mentioning tests`
-3. Pick a message:
-A Telescope picker will appear with several commit suggestions. Preview each with the right pane, then select one to commit.
-4. (Optional) Push automatically:
-Enable auto_push in your config to push right after the commit.
+### Basic Workflow
+
+1. **Stage your changes:**
+
+   ```bash
+   git add <files>
+   ```
+
+   Or use your favorite Git plugin (fugitive, gitsigns, etc.)
+
+2. **Generate commit messages:**
+
+   ```vim
+   :AICommit
+   ```
+
+   **With extra instructions:**
+
+   ```vim
+   :AICommit focus on performance improvements and avoid mentioning tests
+   ```
+
+3. **Select a commit message:**
+   - A Telescope picker will show multiple AI-generated suggestions
+   - Preview each message in the right pane
+   - Press `<Enter>` to select and commit
+   - Press `<Esc>` to cancel
+
+4. **Optional auto-push:**
+   Enable `auto_push = true` in your configuration to automatically push after committing
+
+### Additional Commands
+
+- **`:AICommitLast`** - Recall and re-select from the last batch of generated suggestions
+
+### Troubleshooting
+
+If you encounter issues:
+
+1. **Enable debug mode** in your configuration:
+
+   ```lua
+   debug = true
+   ```
+
+   This saves prompts to your cache directory for inspection.
+
+2. **Check git status:**
+   Ensure you have staged changes: `git diff --cached`
+
+3. **Verify API key:**
+   Make sure your `OPENROUTER_API_KEY` environment variable is set correctly.
 
 ## Commands
 

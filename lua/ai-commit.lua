@@ -3,15 +3,17 @@ local M = {}
 M.config = {
   env = {
     api_key = nil,
-    url = nil,
-    chat_url = nil,
+    url = "https://openrouter.ai/api/v1/",
+    chat_url = "chat/completions",
   },
-  model = nil,
+  model = "google/gemini-2.5-flash",
   auto_push = false,
   commit_prompt_template = nil,
   system_prompt = nil,
   ignored_files = {},
   debug = false,
+  max_tokens = 4096,
+  max_diff_length = nil,
 }
 
 M.last_commit_messages = nil

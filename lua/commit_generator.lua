@@ -54,8 +54,11 @@ Another body.
 ]]
 
 local function validate_api_key(api_key)
+  api_key = api_key or os.getenv "OPENROUTER_API_KEY"
+
   if not api_key then
-    vim.notify("OpenRouter API key not found. Please set OPENROUTER_API_KEY environment variable", vim.log.levels.ERROR)
+    vim.notify("OpenRouter API key not found. Set it in config or OPENROUTER_API_KEY env var.", vim.log.levels.ERROR)
+
     return nil
   end
 
@@ -67,26 +70,42 @@ local function split_diff_by_file(diff)
   local current_hunk = {}
   local current_file = nil
 
-  for line in diff:gmatch "([^\n]*)\n?" do
+  local lines = vim.split(diff, "\n", { plain = true, trimempty = false })
+
+  for _, line in ipairs(lines) do
     if line:match "^diff%s+--git" then
       if current_file and #current_hunk > 0 then
         table.insert(hunks, { filename = current_file, hunk = table.concat(current_hunk, "\n") })
       end
+
       current_hunk = { line }
       current_file = nil
+    elseif line:match "^--- a/" then
+      local a_file = line:match "^--- a/(.+)"
+
+      if a_file and a_file ~= "/dev/null" and not current_file then
+        current_file = a_file
+      end
+
+      table.insert(current_hunk, line)
     elseif line:match "^%+%+%+ b/" then
-      local file = line:match "^%+%+%+ b/(.+)"
-      if not file or file == "/dev/null" then
+      local b_file = line:match "^%+%+%+ b/(.+)"
+
+      if b_file and b_file ~= "/dev/null" then
+        current_file = b_file
+      elseif current_file == nil then
         for i = #current_hunk, 1, -1 do
           local prev = current_hunk[i]
           local a_file = prev and prev:match "^--- a/(.+)"
+
           if a_file and a_file ~= "/dev/null" then
-            file = a_file
+            current_file = a_file
+
             break
           end
         end
       end
-      current_file = file
+
       table.insert(current_hunk, line)
     elseif #current_hunk > 0 then
       table.insert(current_hunk, line)
@@ -102,7 +121,13 @@ end
 
 local function is_file_ignored(filename, ignored)
   for _, pattern in ipairs(ignored or {}) do
-    if filename == pattern or filename:match(pattern) then
+    if filename == pattern then
+      return true
+    end
+
+    local regpat = vim.fn.glob2regpat(pattern)
+
+    if filename:match(regpat) then
       return true
     end
   end
@@ -113,12 +138,25 @@ end
 local function collect_git_data(config)
   local diff_context = vim.fn.system "git -P diff --cached -U10"
 
+  if vim.v.shell_error ~= 0 then
+    vim.notify("Failed to get git diff: Not in a git repo or git not available?", vim.log.levels.ERROR)
+
+    return nil
+  end
+
   if diff_context == "" then
     vim.notify("No staged changes found. Add files with 'git add' first.", vim.log.levels.ERROR)
+
     return nil
   end
 
   local ignored_files = config and config.ignored_files or {}
+  local max_diff_length = config and config.max_diff_length
+
+  if max_diff_length and #diff_context > max_diff_length then
+    diff_context = diff_context:sub(1, max_diff_length) .. "\n... (diff truncated for token limits)"
+    vim.notify("Diff truncated to avoid token limits.", vim.log.levels.INFO)
+  end
 
   if #ignored_files > 0 then
     local hunks = split_diff_by_file(diff_context)
@@ -131,9 +169,22 @@ local function collect_git_data(config)
     end
 
     diff_context = table.concat(filtered, "\n")
+
+    if diff_context == "" then
+      vim.notify("All staged changes are in ignored files or no changes found.", vim.log.levels.ERROR)
+      return nil
+    end
   end
 
-  local recent_commits = vim.fn.system "git log --oneline -n 5"
+  local recent_commits_list = vim.fn.systemlist "git log --oneline -n 5"
+  local recent_commits = ""
+
+  if vim.fn.empty(recent_commits_list) == 1 and vim.v.shell_error ~= 0 then
+    vim.notify("Failed to fetch recent commits: Not in a git repo?", vim.log.levels.WARN)
+    recent_commits = ""
+  else
+    recent_commits = table.concat(recent_commits_list, "\n")
+  end
 
   return {
     diff = diff_context,
@@ -159,12 +210,11 @@ local function create_prompt(git_data, template, extra_prompt)
   return template
 end
 
-local function prepare_request_data(prompt, system_prompt, model)
+local function prepare_request_data(prompt, system_prompt, model, max_tokens)
   system_prompt = system_prompt or default_system_prompt
 
-  return {
+  local request_data = {
     model = model,
-    max_tokens = 4096,
     messages = {
       {
         role = "system",
@@ -176,16 +226,48 @@ local function prepare_request_data(prompt, system_prompt, model)
       },
     },
   }
+
+  if max_tokens then
+    request_data.max_tokens = max_tokens
+  end
+
+  return request_data
 end
 
 local function parse_commit_messages(text)
   local messages = {}
-  for msg in text:gmatch "(.-)%s*%-%-%- END COMMIT %-%-%-" do
-    msg = msg:gsub("^%s+", ""):gsub("%s+$", "")
-    if msg ~= "" then
-      table.insert(messages, msg)
+  local separator = "--- END COMMIT ---"
+  local parts = {}
+  local start_pos = 1
+
+  while true do
+    local sep_start, sep_end = text:find(separator, start_pos, true)
+
+    if not sep_start then
+      local remaining = text:sub(start_pos)
+
+      if remaining:match "%S" then
+        table.insert(parts, remaining)
+      end
+
+      break
+    end
+
+    local part = text:sub(start_pos, sep_start - 1)
+
+    table.insert(parts, part)
+
+    start_pos = sep_end + 1
+  end
+
+  for _, part in ipairs(parts) do
+    part = part:gsub("^%s+", ""):gsub("%s+$", "")
+
+    if part ~= "" then
+      table.insert(messages, part)
     end
   end
+
   return messages
 end
 
@@ -212,7 +294,6 @@ local function handle_api_response(response)
     end
   else
     local error_info = "Unknown error"
-
     local ok, error_data = pcall(vim.json.decode, response.body)
 
     if ok and error_data and error_data.error then
@@ -223,7 +304,9 @@ local function handle_api_response(response)
         error_info = "Insufficient credits: " .. error_message
       elseif error_code == 403 and error_data.error.metadata and error_data.error.metadata.reasons then
         local reasons = table.concat(error_data.error.metadata.reasons, ", ")
+
         error_info = "Content moderation error: " .. reasons
+
         if error_data.error.metadata.flagged_input then
           error_info = error_info .. " (flagged input: '" .. error_data.error.metadata.flagged_input .. "')"
         end
@@ -255,14 +338,14 @@ end
 
 local function save_debug_prompt(prompt, system_prompt)
   local debug_dir = vim.fn.stdpath "cache" .. "/ai-commit-debug"
+
   vim.fn.mkdir(debug_dir, "p")
 
   local timestamp = os.date "%Y%m%d_%H%M%S"
   local debug_file = debug_dir .. "/prompt_" .. timestamp .. ".txt"
-
   local content = "=== SYSTEM PROMPT ===\n" .. (system_prompt or "") .. "\n\n=== USER PROMPT ===\n" .. prompt
-
   local file = io.open(debug_file, "w")
+
   if file then
     file:write(content)
     file:close()
@@ -308,7 +391,7 @@ function M.generate_commit(config, extra_prompt)
   local system_prompt = config.system_prompt or default_system_prompt
 
   local prompt = create_prompt(git_data, template, extra_prompt)
-  local data = prepare_request_data(prompt, system_prompt, config.model)
+  local data = prepare_request_data(prompt, system_prompt, config.model, config.max_tokens)
 
   if config.debug then
     save_debug_prompt(prompt, system_prompt)
