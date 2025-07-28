@@ -102,16 +102,16 @@ You can configure the plugin in your setup call. Here are all the available opti
 
 | Option                   | Type      | Default                        | Description                                                                          |
 | ------------------------ | --------- | ------------------------------ | ------------------------------------------------------------------------------------ |
-| `env.api_key`            | string    | nil (uses env var)             | OpenRouter API key (automatically uses `OPENROUTER_API_KEY` if not set)             |
-| `env.url`                | string    | "<https://openrouter.ai/api/v1/>" | OpenRouter base API URL                                                              |
+| `env.api_key`            | string    | nil (uses env var)             | OpenRouter API key (automatically uses `OPENROUTER_API_KEY` if not set)              |
+| `env.url`                | string    | "https://openrouter.ai/api/v1/"| OpenRouter base API URL                                                              |
 | `env.chat_url`           | string    | "chat/completions"             | API path for chat/completions                                                        |
-| `model`                  | string    | "anthropic/claude-3.5-sonnet"  | OpenRouter model ID                                                                  |
+| `model`                  | string    | "google/gemini-2.5-flash"      | OpenRouter model ID                                                                  |
 | `auto_push`              | boolean   | false                          | Push to remote after committing                                                      |
-| `max_tokens`             | number    | 4096                           | Maximum tokens for AI response (nil disables limit)                                 |
-| `max_diff_length`        | number    | nil (no limit)                 | Truncate diffs longer than this to avoid token limits (nil disables limit)          |
-| `commit_prompt_template` | string    | see below                      | Template for the user prompt sent to AI (see Placeholders)                          |
-| `system_prompt`          | string    | see below                      | System prompt for AI (defines commit style, count, format, etc.)                    |
-| `ignored_files`          | string[]  | `{}`                           | List of file names or glob patterns to ignore from diff (supports `*.ext`, `dir/*`) |
+| `max_tokens`             | number    | 4096                           | Maximum tokens for AI response (nil disables limit)                                  |
+| `max_diff_length`        | number    | nil (no limit)                 | Truncate diffs longer than this to avoid token limits (nil disables limit)           |
+| `commit_prompt_template` | string    | see below                      | Template for the user prompt sent to AI (see Placeholders)                           |
+| `system_prompt`          | string    | see below                      | System prompt for AI (defines commit style, count, format, etc.)                     |
+| `ignored_files`          | string[]  | `{}`                           | List of file names or glob patterns to ignore from diff (supports `*.ext`, `dir/*`)  |
 | `debug`                  | boolean   | false                          | Save prompts to cache directory for debugging purposes                               |
 
 ## Customizing the Prompt Template
