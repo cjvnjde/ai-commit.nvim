@@ -176,20 +176,27 @@ local function collect_git_data(config)
     end
   end
 
-  local recent_commits_list = vim.fn.systemlist "git log --oneline -n 5"
   local recent_commits = ""
+  local recent_commits_list = vim.fn.systemlist "git log --oneline -n 5 2>/dev/null"
 
-  if vim.fn.empty(recent_commits_list) == 1 and vim.v.shell_error ~= 0 then
-    vim.notify("Failed to fetch recent commits: Not in a git repo?", vim.log.levels.WARN)
-    recent_commits = ""
-  else
+  if vim.v.shell_error == 0 and #recent_commits_list > 0 then
     recent_commits = table.concat(recent_commits_list, "\n")
+  else
+    vim.fn.system "git rev-parse HEAD 2>/dev/null"
+
+    if vim.v.shell_error ~= 0 then
+      recent_commits = "Initial repository (no previous commits)"
+    end
   end
 
   return {
     diff = diff_context,
     commits = recent_commits,
   }
+end
+
+local function escape_pattern(str)
+  return (str:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
 end
 
 local function create_prompt(git_data, template, extra_prompt)
@@ -202,7 +209,9 @@ local function create_prompt(git_data, template, extra_prompt)
   }
 
   for placeholder, value in pairs(replacements) do
-    template = template:gsub(placeholder, value)
+    local escaped_placeholder = escape_pattern(placeholder)
+    local escaped_value = (value:gsub("%%", "%%%%"))
+    template = template:gsub(escaped_placeholder, escaped_value)
   end
 
   template = template:gsub("<[%w_]+/>", "")

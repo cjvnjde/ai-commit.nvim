@@ -103,7 +103,7 @@ You can configure the plugin in your setup call. Here are all the available opti
 | Option                   | Type      | Default                        | Description                                                                          |
 | ------------------------ | --------- | ------------------------------ | ------------------------------------------------------------------------------------ |
 | `env.api_key`            | string    | nil (uses env var)             | OpenRouter API key (automatically uses `OPENROUTER_API_KEY` if not set)              |
-| `env.url`                | string    | "https://openrouter.ai/api/v1/"| OpenRouter base API URL                                                              |
+| `env.url`                | string    | "<https://openrouter.ai/api/v1/>"| OpenRouter base API URL                                                              |
 | `env.chat_url`           | string    | "chat/completions"             | API path for chat/completions                                                        |
 | `model`                  | string    | "google/gemini-2.5-flash"      | OpenRouter model ID                                                                  |
 | `auto_push`              | boolean   | false                          | Push to remote after committing                                                      |
@@ -112,7 +112,7 @@ You can configure the plugin in your setup call. Here are all the available opti
 | `commit_prompt_template` | string    | see below                      | Template for the user prompt sent to AI (see Placeholders)                           |
 | `system_prompt`          | string    | see below                      | System prompt for AI (defines commit style, count, format, etc.)                     |
 | `ignored_files`          | string[]  | `{}`                           | List of file names or glob patterns to ignore from diff (supports `*.ext`, `dir/*`)  |
-| `debug`                  | boolean   | false                          | Save prompts to cache directory for debugging purposes                               |
+| `debug`                  | boolean   | false                          | Save prompts to cache directory for debugging purposes `:echo stdpath('cache')`                               |
 
 ## Customizing the Prompt Template
 
