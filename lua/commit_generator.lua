@@ -136,7 +136,8 @@ local function is_file_ignored(filename, ignored)
 end
 
 local function collect_git_data(config)
-  local diff_context = vim.fn.system "git -P diff --cached -U10"
+  local diff_context =
+    vim.fn.system "git -P diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --cached -U10"
 
   if vim.v.shell_error ~= 0 then
     vim.notify("Failed to get git diff: Not in a git repo or git not available?", vim.log.levels.ERROR)
