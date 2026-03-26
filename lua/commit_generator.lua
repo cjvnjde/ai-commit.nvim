@@ -53,17 +53,9 @@ Another body.
 (etc.)
 ]]
 
-local function validate_api_key(api_key)
-  api_key = api_key or os.getenv "OPENROUTER_API_KEY"
-
-  if not api_key then
-    vim.notify("OpenRouter API key not found. Set it in config or OPENROUTER_API_KEY env var.", vim.log.levels.ERROR)
-
-    return nil
-  end
-
-  return api_key
-end
+---------------------------------------------------------------------------
+-- Helpers
+---------------------------------------------------------------------------
 
 local function split_diff_by_file(diff)
   local hunks = {}
@@ -96,11 +88,10 @@ local function split_diff_by_file(diff)
       elseif current_file == nil then
         for i = #current_hunk, 1, -1 do
           local prev = current_hunk[i]
-          local a_file = prev and prev:match "^--- a/(.+)"
+          local m = prev and prev:match "^--- a/(.+)"
 
-          if a_file and a_file ~= "/dev/null" then
-            current_file = a_file
-
+          if m and m ~= "/dev/null" then
+            current_file = m
             break
           end
         end
@@ -141,13 +132,11 @@ local function collect_git_data(config)
 
   if vim.v.shell_error ~= 0 then
     vim.notify("Failed to get git diff: Not in a git repo or git not available?", vim.log.levels.ERROR)
-
     return nil
   end
 
   if diff_context == "" then
     vim.notify("No staged changes found. Add files with 'git add' first.", vim.log.levels.ERROR)
-
     return nil
   end
 
@@ -190,10 +179,7 @@ local function collect_git_data(config)
     end
   end
 
-  return {
-    diff = diff_context,
-    commits = recent_commits,
-  }
+  return { diff = diff_context, commits = recent_commits }
 end
 
 local function escape_pattern(str)
@@ -216,33 +202,30 @@ local function create_prompt(git_data, template, extra_prompt)
   end
 
   template = template:gsub("<[%w_]+/>", "")
-
   return template
 end
 
-local function prepare_request_data(prompt, system_prompt, model, max_tokens)
+local function prepare_request_body(prompt, system_prompt, model, max_tokens)
   system_prompt = system_prompt or default_system_prompt
 
-  local request_data = {
+  local body = {
     model = model,
     messages = {
-      {
-        role = "system",
-        content = system_prompt,
-      },
-      {
-        role = "user",
-        content = prompt,
-      },
+      { role = "system", content = system_prompt },
+      { role = "user", content = prompt },
     },
   }
 
   if max_tokens then
-    request_data.max_tokens = max_tokens
+    body.max_tokens = max_tokens
   end
 
-  return request_data
+  return body
 end
+
+---------------------------------------------------------------------------
+-- Response parsing
+---------------------------------------------------------------------------
 
 local function parse_commit_messages(text)
   local messages = {}
@@ -255,24 +238,18 @@ local function parse_commit_messages(text)
 
     if not sep_start then
       local remaining = text:sub(start_pos)
-
       if remaining:match "%S" then
         table.insert(parts, remaining)
       end
-
       break
     end
 
-    local part = text:sub(start_pos, sep_start - 1)
-
-    table.insert(parts, part)
-
+    table.insert(parts, text:sub(start_pos, sep_start - 1))
     start_pos = sep_end + 1
   end
 
   for _, part in ipairs(parts) do
     part = part:gsub("^%s+", ""):gsub("%s+$", "")
-
     if part ~= "" then
       table.insert(messages, part)
     end
@@ -281,15 +258,17 @@ local function parse_commit_messages(text)
   return messages
 end
 
-local function handle_api_response(response)
+local function handle_api_response(response, err)
+  if err then
+    vim.notify("Request failed: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
   if response.status == 200 then
-    local data = vim.json.decode(response.body)
-    local messages = {}
+    local ok, data = pcall(vim.json.decode, response.body)
 
-    if data.choices and #data.choices > 0 and data.choices[1].message and data.choices[1].message.content then
-      local message_content = data.choices[1].message.content
-
-      messages = parse_commit_messages(message_content)
+    if ok and data and data.choices and #data.choices > 0 and data.choices[1].message and data.choices[1].message.content then
+      local messages = parse_commit_messages(data.choices[1].message.content)
 
       if #messages > 0 then
         require("ai-commit").show_commit_suggestions(messages)
@@ -297,10 +276,7 @@ local function handle_api_response(response)
         vim.notify("No commit messages were generated. Try again or modify your changes.", vim.log.levels.WARN)
       end
     else
-      vim.notify(
-        "Received empty response from model. The model may be warming up, try again in a few moments.",
-        vim.log.levels.WARN
-      )
+      vim.notify("Received empty response from model. Try again in a few moments.", vim.log.levels.WARN)
     end
   else
     local error_info = "Unknown error"
@@ -312,107 +288,71 @@ local function handle_api_response(response)
 
       if error_code == 402 then
         error_info = "Insufficient credits: " .. error_message
-      elseif error_code == 403 and error_data.error.metadata and error_data.error.metadata.reasons then
-        local reasons = table.concat(error_data.error.metadata.reasons, ", ")
-
-        error_info = "Content moderation error: " .. reasons
-
-        if error_data.error.metadata.flagged_input then
-          error_info = error_info .. " (flagged input: '" .. error_data.error.metadata.flagged_input .. "')"
-        end
       elseif error_code == 408 then
         error_info = "Request timed out. Try again later."
       elseif error_code == 429 then
         error_info = "Rate limited. Please wait before trying again."
       elseif error_code == 502 then
         error_info = "Model provider error: " .. error_message
-        if error_data.error.metadata and error_data.error.metadata.provider_name then
-          error_info = error_info .. " (provider: " .. error_data.error.metadata.provider_name .. ")"
-        end
       elseif error_code == 503 then
         error_info = "No available model provider: " .. error_message
       else
         error_info = string.format("Error %d: %s", error_code, error_message)
       end
     else
-      error_info = string.format("Error %d: %s", response.status, response.body)
+      error_info = string.format("HTTP %d: %s", response.status, response.body or "")
     end
 
     vim.notify("Failed to generate commit message: " .. error_info, vim.log.levels.ERROR)
   end
 end
 
-local create_ai_endpoint = function(config)
-  return config.env.url .. config.env.chat_url
-end
+---------------------------------------------------------------------------
+-- Debug
+---------------------------------------------------------------------------
 
 local function save_debug_prompt(prompt, system_prompt)
   local debug_dir = vim.fn.stdpath "cache" .. "/ai-commit-debug"
-
   vim.fn.mkdir(debug_dir, "p")
 
   local timestamp = os.date "%Y%m%d_%H%M%S"
   local debug_file = debug_dir .. "/prompt_" .. timestamp .. ".txt"
   local content = "=== SYSTEM PROMPT ===\n" .. (system_prompt or "") .. "\n\n=== USER PROMPT ===\n" .. prompt
-  local file = io.open(debug_file, "w")
 
+  local file = io.open(debug_file, "w")
   if file then
     file:write(content)
     file:close()
     vim.schedule(function()
       vim.notify("Debug: Prompt saved to " .. debug_file, vim.log.levels.INFO)
     end)
-  else
-    vim.schedule(function()
-      vim.notify("Debug: Failed to save prompt to " .. debug_file, vim.log.levels.WARN)
-    end)
   end
 end
 
-local function send_api_request(endpoint, data)
-  vim.schedule(function()
-    vim.notify("Generating commit message...", vim.log.levels.INFO)
-  end)
-
-  require("plenary.curl").post(endpoint, {
-    headers = {
-      content_type = "application/json",
-      authorization = "Bearer " .. data.api_key,
-    },
-    body = vim.json.encode(data.body),
-    callback = vim.schedule_wrap(handle_api_response),
-  })
-end
+---------------------------------------------------------------------------
+-- Public
+---------------------------------------------------------------------------
 
 function M.generate_commit(config, extra_prompt)
-  local api_key = validate_api_key(config.env.api_key)
-
-  if not api_key then
-    return
-  end
-
   local git_data = collect_git_data(config)
-
   if not git_data then
     return
   end
 
   local template = config.commit_prompt_template or default_commit_prompt_template
   local system_prompt = config.system_prompt or default_system_prompt
-
   local prompt = create_prompt(git_data, template, extra_prompt)
-  local data = prepare_request_data(prompt, system_prompt, config.model, config.max_tokens)
+  local body = prepare_request_body(prompt, system_prompt, config.model, config.max_tokens)
 
   if config.debug then
     save_debug_prompt(prompt, system_prompt)
   end
 
-  local endpoint = create_ai_endpoint(config)
-
-  send_api_request(endpoint, {
-    api_key = api_key,
-    body = data,
-  })
+  require("ai-provider").request({
+    provider = config.provider or "openrouter",
+    model = config.model,
+    body = body,
+  }, handle_api_response)
 end
 
 return M
