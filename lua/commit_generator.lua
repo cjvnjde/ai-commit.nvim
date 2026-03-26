@@ -126,6 +126,23 @@ local function is_file_ignored(filename, ignored)
   return false
 end
 
+local function get_recent_commits()
+  local recent_commits = ""
+  local recent_commits_list = vim.fn.systemlist "git log --oneline -n 5 2>/dev/null"
+
+  if vim.v.shell_error == 0 and #recent_commits_list > 0 then
+    recent_commits = table.concat(recent_commits_list, "\n")
+  else
+    vim.fn.system "git rev-parse HEAD 2>/dev/null"
+
+    if vim.v.shell_error ~= 0 then
+      recent_commits = "Initial repository (no previous commits)"
+    end
+  end
+
+  return recent_commits
+end
+
 local function collect_git_data(config)
   local diff_context =
     vim.fn.system "git -P diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --cached -U10"
@@ -166,20 +183,7 @@ local function collect_git_data(config)
     end
   end
 
-  local recent_commits = ""
-  local recent_commits_list = vim.fn.systemlist "git log --oneline -n 5 2>/dev/null"
-
-  if vim.v.shell_error == 0 and #recent_commits_list > 0 then
-    recent_commits = table.concat(recent_commits_list, "\n")
-  else
-    vim.fn.system "git rev-parse HEAD 2>/dev/null"
-
-    if vim.v.shell_error ~= 0 then
-      recent_commits = "Initial repository (no previous commits)"
-    end
-  end
-
-  return { diff = diff_context, commits = recent_commits }
+  return { diff = diff_context, commits = get_recent_commits() }
 end
 
 local function escape_pattern(str)
@@ -258,8 +262,15 @@ local function parse_commit_messages(text)
   return messages
 end
 
-local function handle_api_response(response, err)
+local function emit_result(opts, messages, err)
+  if opts and opts.on_result then
+    opts.on_result(messages, err)
+  end
+end
+
+local function handle_api_response(response, err, opts)
   if err then
+    emit_result(opts, nil, err)
     vim.notify("Request failed: " .. err, vim.log.levels.ERROR)
     return
   end
@@ -271,11 +282,19 @@ local function handle_api_response(response, err)
       local messages = parse_commit_messages(data.choices[1].message.content)
 
       if #messages > 0 then
-        require("ai-commit").show_commit_suggestions(messages)
+        emit_result(opts, messages, nil)
+
+        if opts and opts.show_picker == false and not opts.on_select then
+          return
+        end
+
+        require("ai-commit").show_commit_suggestions(messages, opts)
       else
+        emit_result(opts, nil, "No commit messages were generated")
         vim.notify("No commit messages were generated. Try again or modify your changes.", vim.log.levels.WARN)
       end
     else
+      emit_result(opts, nil, "Received empty response from model")
       vim.notify("Received empty response from model. Try again in a few moments.", vim.log.levels.WARN)
     end
   else
@@ -303,6 +322,7 @@ local function handle_api_response(response, err)
       error_info = string.format("HTTP %d: %s", response.status, response.body or "")
     end
 
+    emit_result(opts, nil, error_info)
     vim.notify("Failed to generate commit message: " .. error_info, vim.log.levels.ERROR)
   end
 end
@@ -352,7 +372,35 @@ function M.generate_commit(config, extra_prompt)
     provider = config.provider or "openrouter",
     model = config.model,
     body = body,
+    label = "AICommit",
   }, handle_api_response)
+end
+
+--- Generate commit messages from an explicit diff text.
+--- @param config table Plugin config
+--- @param diff_text string The diff to generate messages for
+--- @param opts? table { extra_prompt?: string, on_select?: fun(message: string) }
+function M.generate_for_diff(config, diff_text, opts)
+  opts = opts or {}
+
+  local git_data = { diff = diff_text, commits = get_recent_commits() }
+  local template = config.commit_prompt_template or default_commit_prompt_template
+  local system_prompt = config.system_prompt or default_system_prompt
+  local prompt = create_prompt(git_data, template, opts.extra_prompt)
+  local body = prepare_request_body(prompt, system_prompt, config.model, config.max_tokens)
+
+  if config.debug then
+    save_debug_prompt(prompt, system_prompt)
+  end
+
+  require("ai-provider").request({
+    provider = config.provider or "openrouter",
+    model = config.model,
+    body = body,
+    label = "AICommit",
+  }, function(response, err)
+    handle_api_response(response, err, opts)
+  end)
 end
 
 return M

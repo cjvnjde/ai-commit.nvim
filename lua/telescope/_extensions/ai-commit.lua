@@ -71,6 +71,7 @@ local function create_commit_picker(opts)
 
   opts = setup_opts(opts)
   local messages = opts.messages or {}
+  local on_select = opts.on_select
 
   local entry_maker = function(msg)
     local subject = vim.split(msg, "\n")[1] or msg
@@ -93,13 +94,13 @@ local function create_commit_picker(opts)
         define_preview = function(self, entry)
           local lines = vim.split(entry.value, "\n")
           vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-          vim.api.nvim_buf_set_option(self.state.bufnr, "filetype", "gitcommit")
-          vim.api.nvim_buf_set_option(self.state.bufnr, "modifiable", false)
+          vim.bo[self.state.bufnr].filetype = "gitcommit"
+          vim.bo[self.state.bufnr].modifiable = false
           vim.schedule(function()
             local win = self.state.winid
             if win and vim.api.nvim_win_is_valid(win) then
-              vim.api.nvim_win_set_option(win, "wrap", true)
-              vim.api.nvim_win_set_option(win, "linebreak", true)
+              vim.wo[win].wrap = true
+              vim.wo[win].linebreak = true
             end
           end)
         end,
@@ -110,7 +111,11 @@ local function create_commit_picker(opts)
           local selection = action_state.get_selected_entry()
           actions.close(prompt_bufnr)
           if selection and selection.value then
-            commit_changes(selection.value)
+            if on_select then
+              on_select(selection.value)
+            else
+              commit_changes(selection.value)
+            end
           else
             vim.notify("No commit message selected", vim.log.levels.WARN)
           end
@@ -178,7 +183,7 @@ local function create_model_picker(opts)
             is_active and "✓ Currently active" or "Press <Enter> to select",
           }
           vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-          vim.api.nvim_buf_set_option(self.state.bufnr, "modifiable", false)
+          vim.bo[self.state.bufnr].modifiable = false
         end,
       },
       sorter = conf.generic_sorter(opts),

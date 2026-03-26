@@ -90,7 +90,25 @@ M.generate_commit = function(extra_prompt)
   require("commit_generator").generate_commit(M.config, extra_prompt)
 end
 
-M.show_commit_suggestions = function(messages)
+--- Generate commit messages from an explicit diff (for integration with other plugins).
+--- @param diff_text string The diff to generate messages for
+--- @param opts? table { extra_prompt?: string, on_select?: fun(message: string), on_result?: fun(messages: string[]|nil, err: string|nil), show_picker?: boolean }
+M.generate_commit_for_diff = function(diff_text, opts)
+  require("commit_generator").generate_for_diff(M.config, diff_text, opts)
+end
+
+--- Generate commit messages from an explicit diff without opening Telescope.
+--- @param diff_text string The diff to generate messages for
+--- @param opts? table { extra_prompt?: string }
+--- @param callback fun(messages: string[]|nil, err: string|nil)
+M.generate_commit_messages_for_diff = function(diff_text, opts, callback)
+  opts = opts or {}
+  opts.show_picker = false
+  opts.on_result = callback
+  require("commit_generator").generate_for_diff(M.config, diff_text, opts)
+end
+
+M.show_commit_suggestions = function(messages, opts)
   M.last_commit_messages = messages
 
   local has_telescope, _ = pcall(require, "telescope")
@@ -99,7 +117,10 @@ M.show_commit_suggestions = function(messages)
     error "This plugin requires nvim-telescope/telescope.nvim"
   end
 
-  require("telescope").extensions["ai-commit"].commit { messages = messages }
+  require("telescope").extensions["ai-commit"].commit {
+    messages = messages,
+    on_select = opts and opts.on_select or nil,
+  }
 end
 
 M.show_last_commit_suggestions = function()
