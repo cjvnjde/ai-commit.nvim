@@ -2,24 +2,25 @@
 
 Generate AI commit message suggestions for your staged changes.
 
-`ai-commit.nvim` reads the staged diff, asks an AI model for several Conventional Commit suggestions, and lets you pick one from Telescope.
+`ai-commit.nvim` reads the staged diff, asks an AI model for several Conventional Commit suggestions, and lets you pick one from a Telescope picker. It supports multiple providers through [ai-provider.nvim](https://github.com/cjvnjde/ai-provider.nvim) — including GitHub Copilot (free with a Copilot subscription) and OpenRouter (access to dozens of models).
 
-It can also be used by other plugins through a small public API.
+It can also be used by other plugins (like [ai-split-commit.nvim](https://github.com/cjvnjde/ai-split-commit.nvim)) through a small public API to generate commit messages from an arbitrary diff.
 
 ![image](https://i.imgur.com/mDR44F5.png)
 
 ## Features
 
-- generate multiple commit message suggestions from staged changes
-- Conventional Commit output
-- OpenRouter and GitHub Copilot support via `ai-provider.nvim`
-- Telescope picker UI
-- model browser via `:AICommitModels`
-- ignored file filtering
-- optional auto-push after commit
-- gitcommit buffer support
-- debug prompt logging
-- public API for generating messages from an explicit diff
+- Generate multiple commit message suggestions from staged changes
+- Conventional Commits output (type(scope): subject + optional body)
+- Telescope picker UI with preview
+- Model browser via `:AICommitModels`
+- Ignored file filtering (skip lockfiles, build output, etc.)
+- Optional auto-push after commit
+- Gitcommit buffer support (pastes the message instead of committing)
+- Extra instructions via command args (e.g., `:AICommit focus on the bug fix`)
+- Custom prompt templates
+- Debug prompt logging
+- Public API for generating messages from an explicit diff
 
 ---
 
@@ -35,7 +36,7 @@ It can also be used by other plugins through a small public API.
 
 ## Installation
 
-### 1. GitHub Copilot setup
+Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
@@ -44,40 +45,6 @@ It can also be used by other plugins through a small public API.
     "nvim-lua/plenary.nvim",
     "nvim-telescope/telescope.nvim",
     "cjvnjde/ai-provider.nvim",
-  },
-  opts = {
-    provider = "github-copilot",
-    model = "gpt-5-mini",
-  },
-}
-```
-
-### 2. OpenRouter setup
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
-  dependencies = {
-    "nvim-lua/plenary.nvim",
-    "nvim-telescope/telescope.nvim",
-    "cjvnjde/ai-provider.nvim",
-  },
-  opts = {
-    provider = "openrouter",
-    model = "google/gemini-2.5-flash",
-  },
-}
-```
-
-### 3. Local development setup
-
-```lua
-{
-  dir = "/mnt/shared/projects/personal/nvim-plugins/ai-commit.nvim",
-  dependencies = {
-    "nvim-lua/plenary.nvim",
-    "nvim-telescope/telescope.nvim",
-    { dir = "/mnt/shared/projects/personal/nvim-plugins/ai-provider.nvim" },
   },
   opts = {
     provider = "github-copilot",
@@ -88,38 +55,43 @@ It can also be used by other plugins through a small public API.
 
 ---
 
-## Provider setup
+## Setup
 
-## OpenRouter
-
-Set your key:
-
-```bash
-export OPENROUTER_API_KEY=sk-...
+```lua
+require("ai-commit").setup(opts)
 ```
 
-Or forward it through the plugin:
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `provider` | `string` | `"openrouter"` | AI provider to use. One of `"openrouter"`, `"github-copilot"`, `"anthropic"`, `"google"`, `"openai"`, `"xai"`, `"groq"`, `"cerebras"`, `"mistral"`. |
+| `model` | `string` | `"google/gemini-2.5-flash"` | Model ID for the selected provider. Use `:AICommitModels` to browse available models. |
+| `auto_push` | `boolean` | `false` | Automatically push after a successful commit. |
+| `max_tokens` | `number` | `4096` | Maximum output tokens for the AI response. |
+| `max_diff_length` | `number?` | `nil` | Truncate the staged diff to this many characters before sending. Useful for very large diffs that would exceed token limits. When `nil`, the full diff is sent. |
+| `commit_prompt_template` | `string?` | `nil` | Custom user prompt template. See [Prompt Customization](#prompt-customization) for available placeholders. When `nil`, the built-in template is used. |
+| `system_prompt` | `string?` | `nil` | Custom system prompt. When `nil`, the built-in system prompt is used. |
+| `ignored_files` | `string[]` | `{}` | List of file paths or glob patterns to exclude from the staged diff before sending to the AI. |
+| `debug` | `boolean` | `false` | Save prompts to `~/.cache/nvim/ai-commit-debug/` for inspection. |
+| `provider_config` | `table?` | `nil` | Provider-specific settings forwarded to `ai-provider.setup()`. See [ai-provider.nvim](https://github.com/cjvnjde/ai-provider.nvim) for details. |
+
+---
+
+## Configuration Examples
+
+### 1. GitHub Copilot with GPT-5 Mini
+
+The simplest setup — free with a GitHub Copilot subscription:
 
 ```lua
 {
   "cjvnjde/ai-commit.nvim",
-  opts = {
-    provider = "openrouter",
-    model = "google/gemini-2.5-flash",
-    provider_config = {
-      openrouter = {
-        api_key = "sk-your-key",
-      },
-    },
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
   },
-}
-```
-
-## GitHub Copilot
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
   opts = {
     provider = "github-copilot",
     model = "gpt-5-mini",
@@ -127,17 +99,99 @@ Or forward it through the plugin:
 }
 ```
 
-Authenticate once:
+Then authenticate once:
 
 ```vim
 :AICommitLogin
 ```
 
-### GitHub Enterprise
+### 2. OpenRouter with Gemini 2.5 Flash
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+```
 
 ```lua
 {
   "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "openrouter",
+    model = "google/gemini-2.5-flash",
+  },
+}
+```
+
+### 3. OpenRouter with explicit API key (no env variable)
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "openrouter",
+    model = "google/gemini-2.5-flash",
+    provider_config = {
+      openrouter = {
+        api_key = "sk-or-your-key-here",
+      },
+    },
+  },
+}
+```
+
+### 4. OpenRouter with a stronger model
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "openrouter",
+    model = "anthropic/claude-sonnet-4",
+  },
+}
+```
+
+### 5. GitHub Copilot with Claude Sonnet 4.6
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "github-copilot",
+    model = "claude-sonnet-4.6",
+  },
+}
+```
+
+### 6. GitHub Enterprise Copilot
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
   opts = {
     provider = "github-copilot",
     model = "gpt-5-mini",
@@ -150,49 +204,171 @@ Authenticate once:
 }
 ```
 
----
-
-## Configuration
+### 7. Ignore lockfiles, generated files, and build output
 
 ```lua
 {
-  provider = "openrouter",
-  model = "google/gemini-2.5-flash",
-  auto_push = false,
-  max_tokens = 4096,
-  max_diff_length = nil,
-  commit_prompt_template = nil,
-  system_prompt = nil,
-  ignored_files = {},
-  debug = false,
-
-  provider_config = {
-    openrouter = { api_key = nil },
-    ["github-copilot"] = { enterprise_domain = nil },
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "github-copilot",
+    model = "gpt-5-mini",
+    ignored_files = {
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "lazy-lock.json",
+      "dist/*",
+      "build/*",
+      "*.min.js",
+      "*.min.css",
+    },
   },
 }
 ```
 
-## Options
+### 8. Auto-push after commit
 
-| Option | Type | Description |
-| --- | --- | --- |
-| `provider` | `string` | `openrouter` or `github-copilot` |
-| `model` | `string` | model ID for the selected provider |
-| `auto_push` | `boolean` | push after successful commit |
-| `max_tokens` | `number` | max output tokens |
-| `max_diff_length` | `number?` | truncate large diffs before sending |
-| `commit_prompt_template` | `string?` | custom user prompt |
-| `system_prompt` | `string?` | custom system prompt |
-| `ignored_files` | `string[]` | ignore files/globs in staged diff |
-| `debug` | `boolean` | save prompts to cache |
-| `provider_config` | `table?` | forwarded to `ai-provider.setup()` |
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "github-copilot",
+    model = "gpt-5-mini",
+    auto_push = true,
+  },
+}
+```
+
+### 9. Truncate large diffs
+
+Useful for monorepos or very large changesets:
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "openrouter",
+    model = "google/gemini-2.5-pro",
+    max_diff_length = 20000,
+    max_tokens = 8192,
+  },
+}
+```
+
+### 10. Debug mode — inspect prompts
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "github-copilot",
+    model = "gpt-5-mini",
+    debug = true,
+  },
+}
+```
+
+Prompts are saved to `~/.cache/nvim/ai-commit-debug/`.
+
+### 11. Anthropic Claude direct (via API key)
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "anthropic",
+    model = "claude-sonnet-4-20250514",
+  },
+}
+```
+
+### 12. Google Gemini direct (via API key)
+
+```bash
+export GEMINI_API_KEY=AIza...
+```
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "google",
+    model = "gemini-2.5-flash",
+  },
+}
+```
+
+### 13. Full kitchen-sink configuration
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
+    "cjvnjde/ai-provider.nvim",
+  },
+  opts = {
+    provider = "github-copilot",
+    model = "claude-sonnet-4.6",
+    auto_push = false,
+    max_tokens = 8192,
+    max_diff_length = 30000,
+    debug = false,
+    ignored_files = {
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "dist/*",
+    },
+    provider_config = {
+      ["github-copilot"] = {
+        enterprise_domain = "company.ghe.com",
+      },
+    },
+  },
+}
+```
 
 ---
 
 ## Usage
 
-## Basic staged commit flow
+### Basic staged commit flow
 
 ```bash
 git add .
@@ -206,27 +382,18 @@ Then in Neovim:
 
 Pick a message from Telescope and press `<Enter>`.
 
-## With extra instructions
+### With extra instructions
 
 ```vim
 :AICommit focus on performance improvements
 :AICommit emphasize the refactor
 :AICommit prefer a concise subject and body
+:AICommit this is a breaking change
 ```
 
-## In a `gitcommit` buffer
+### In a gitcommit buffer
 
-If the current buffer has `filetype=gitcommit`, selecting a suggestion pastes the message into that buffer instead of running `git commit -m`.
-
----
-
-## Model selection
-
-```vim
-:AICommitModels
-:AICommitModels github-copilot
-:AICommitModels openrouter
-```
+If the current buffer has `filetype=gitcommit` (e.g., when running `git commit` with `EDITOR=nvim`), selecting a suggestion pastes the message into that buffer instead of running `git commit -m`.
 
 ---
 
@@ -234,77 +401,26 @@ If the current buffer has `filetype=gitcommit`, selecting a suggestion pastes th
 
 | Command | Description |
 | --- | --- |
-| `:AICommit [extra prompt]` | Generate commit suggestions from staged changes |
-| `:AICommitLast` | Re-open last generated suggestions |
-| `:AICommitModels [provider]` | Select a model |
-| `:AICommitLogin [provider]` | Authenticate provider |
-| `:AICommitLogout [provider]` | Remove stored credentials |
-| `:AICommitStatus` | Show provider + model + auth status |
+| `:AICommit [extra prompt]` | Generate commit suggestions from staged changes. Optional extra instructions are appended to the prompt. |
+| `:AICommitLast` | Re-open the last generated suggestions in Telescope (no new AI request). |
+| `:AICommitModels [provider]` | Browse and select a model for the current or specified provider. The selection is persisted to disk. |
+| `:AICommitLogin [provider]` | Authenticate with a provider (default: current provider). Required for GitHub Copilot. |
+| `:AICommitLogout [provider]` | Remove stored credentials for a provider. |
+| `:AICommitStatus` | Show current provider, model, and authentication status. |
 
 ---
 
-## Examples
+## Model Selection
 
-## 1. Ignore lockfiles and generated files
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
-  opts = {
-    provider = "github-copilot",
-    model = "gpt-5-mini",
-    ignored_files = {
-      "package-lock.json",
-      "yarn.lock",
-      "pnpm-lock.yaml",
-      "lazy-lock.json",
-      "dist/*",
-      "build/*",
-    },
-  },
-}
+```vim
+:AICommitModels
+:AICommitModels github-copilot
+:AICommitModels openrouter
+:AICommitModels anthropic
+:AICommitModels google
 ```
 
-## 2. Use OpenRouter with a stronger model
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
-  opts = {
-    provider = "openrouter",
-    model = "google/gemini-2.5-pro",
-  },
-}
-```
-
-## 3. Use Copilot with a fast model
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
-  opts = {
-    provider = "github-copilot",
-    model = "gpt-5-mini",
-  },
-}
-```
-
-## 4. Forward provider config through the plugin
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
-  opts = {
-    provider = "github-copilot",
-    model = "gpt-5-mini",
-    provider_config = {
-      ["github-copilot"] = {
-        enterprise_domain = "company.ghe.com",
-      },
-    },
-  },
-}
-```
+The selected model is persisted to `~/.local/share/nvim/ai-commit/model_selection.json` and restored on next startup (as long as the provider matches).
 
 ---
 
@@ -343,7 +459,6 @@ require("ai-commit").generate_commit_for_diff(diff_text, {
       print(err)
       return
     end
-
     print(messages[1])
   end,
 })
@@ -359,44 +474,35 @@ require("ai-commit").generate_commit_messages_for_diff(diff_text, {
     print(err)
     return
   end
-
   print(messages[1])
 end)
 ```
 
-If `on_select` is omitted, the plugin uses its default behavior unless `show_picker = false` is set.
+If `on_select` is omitted, the plugin uses its default behavior (commit or paste into gitcommit buffer) unless `show_picker = false` is set.
 
 ---
 
-## Logging
+## Prompt Customization
 
-When a request is sent, you now get a single clearer notification.
+You can replace the user prompt and/or system prompt entirely.
 
-Example:
+### Available placeholders
 
-```text
-Sending AI request: AICommit -> github-copilot / gpt-5-mini -> api.githubcopilot.com
-```
+| Placeholder | Description |
+|-------------|-------------|
+| `<git_diff/>` | The staged diff (after filtering and truncation) |
+| `<recent_commits/>` | The last 5 commit subjects from `git log --oneline` |
+| `<extra_prompt/>` | Extra instructions passed via `:AICommit ...` args |
 
-This makes it obvious:
-- which plugin initiated the request
-- which provider is being used
-- which model is being used
-- which host receives the request
-
----
-
-## Prompt customization
-
-Available placeholders:
-- `<git_diff/>`
-- `<recent_commits/>`
-- `<extra_prompt/>`
-
-Example:
+### Example: custom prompt template
 
 ```lua
-commit_prompt_template = [[
+{
+  "cjvnjde/ai-commit.nvim",
+  opts = {
+    provider = "github-copilot",
+    model = "gpt-5-mini",
+    commit_prompt_template = [[
 Write several Conventional Commit messages for the diff below.
 
 Extra instructions:
@@ -407,5 +513,36 @@ Diff:
 
 Recent commits:
 <recent_commits/>
-]]
+]],
+  },
+}
 ```
+
+### Example: custom system prompt
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  opts = {
+    provider = "github-copilot",
+    model = "gpt-5-mini",
+    system_prompt = [[
+You are a commit message writer. Generate 3-5 commit messages
+following Conventional Commits. Be concise. Use present tense.
+Separate each message with: --- END COMMIT ---
+]],
+  },
+}
+```
+
+---
+
+## Logging
+
+When a request is sent, you see a single notification:
+
+```text
+Sending AI request: AICommit -> github-copilot / gpt-5-mini -> api.githubcopilot.com
+```
+
+This tells you which plugin initiated the request, which provider and model are being used, and which host receives the request.
