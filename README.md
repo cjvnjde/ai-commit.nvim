@@ -15,6 +15,7 @@ It can also be used by other plugins (like [ai-split-commit.nvim](https://github
 - Telescope picker UI with preview
 - Model browser via `:AICommitModels`
 - Ignored file filtering (skip lockfiles, build output, etc.)
+- Binary-safe staged diff handling
 - Optional auto-push after commit
 - Gitcommit buffer support (pastes the message instead of committing)
 - Extra instructions via command args (e.g., `:AICommit focus on the bug fix`)

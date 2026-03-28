@@ -62,50 +62,53 @@ local function split_diff_by_file(diff)
   local current_hunk = {}
   local current_file = nil
 
+  local function finalize_hunk()
+    if current_file and #current_hunk > 0 then
+      table.insert(hunks, { filename = current_file, hunk = table.concat(current_hunk, "\n") })
+    end
+
+    current_hunk = {}
+    current_file = nil
+  end
+
   local lines = vim.split(diff, "\n", { plain = true, trimempty = false })
 
   for _, line in ipairs(lines) do
     if line:match "^diff%s+--git" then
-      if current_file and #current_hunk > 0 then
-        table.insert(hunks, { filename = current_file, hunk = table.concat(current_hunk, "\n") })
-      end
+      finalize_hunk()
 
       current_hunk = { line }
-      current_file = nil
-    elseif line:match "^--- a/" then
-      local a_file = line:match "^--- a/(.+)"
 
-      if a_file and a_file ~= "/dev/null" and not current_file then
-        current_file = a_file
-      end
+      local old_file, new_file = line:match "^diff%s+%-%-git%s+a/(.-)%s+b/(.+)$"
+      current_file = (new_file and new_file ~= "/dev/null") and new_file or old_file
+    elseif #current_hunk > 0 then
+      if line:match "^--- " then
+        local a_file = line:match "^%-%-%-%s+(.+)$"
 
-      table.insert(current_hunk, line)
-    elseif line:match "^%+%+%+ b/" then
-      local b_file = line:match "^%+%+%+ b/(.+)"
+        if a_file and a_file ~= "/dev/null" then
+          current_file = a_file:gsub("^a/", "")
+        end
+      elseif line:match "^%+%+%+ " then
+        local b_file = line:match "^%+%+%+%s+(.+)$"
 
-      if b_file and b_file ~= "/dev/null" then
-        current_file = b_file
-      elseif current_file == nil then
-        for i = #current_hunk, 1, -1 do
-          local prev = current_hunk[i]
-          local m = prev and prev:match "^--- a/(.+)"
+        if b_file and b_file ~= "/dev/null" then
+          current_file = b_file:gsub("^b/", "")
+        end
+      elseif line:match "^Binary files " then
+        local old_file, new_file = line:match "^Binary files (.-) and (.+) differ$"
 
-          if m and m ~= "/dev/null" then
-            current_file = m
-            break
-          end
+        if new_file and new_file ~= "/dev/null" then
+          current_file = new_file:gsub("^b/", "")
+        elseif old_file and old_file ~= "/dev/null" then
+          current_file = old_file:gsub("^a/", "")
         end
       end
 
       table.insert(current_hunk, line)
-    elseif #current_hunk > 0 then
-      table.insert(current_hunk, line)
     end
   end
 
-  if current_file and #current_hunk > 0 then
-    table.insert(hunks, { filename = current_file, hunk = table.concat(current_hunk, "\n") })
-  end
+  finalize_hunk()
 
   return hunks
 end
@@ -143,6 +146,43 @@ local function get_recent_commits()
   return recent_commits
 end
 
+local function prepare_diff_context(config, diff_context, empty_message)
+  diff_context = diff_context or ""
+
+  if diff_context == "" then
+    return nil, empty_message or "No changes found.", false
+  end
+
+  local ignored_files = config and config.ignored_files or {}
+  local max_diff_length = config and config.max_diff_length
+
+  if #ignored_files > 0 then
+    local hunks = split_diff_by_file(diff_context)
+
+    if #hunks > 0 then
+      local filtered = {}
+
+      for _, h in ipairs(hunks) do
+        if not is_file_ignored(h.filename or "", ignored_files) then
+          table.insert(filtered, h.hunk)
+        end
+      end
+
+      diff_context = table.concat(filtered, "\n")
+    end
+
+    if diff_context == "" then
+      return nil, "All changes are in ignored files or no changes found.", false
+    end
+  end
+
+  if max_diff_length and #diff_context > max_diff_length then
+    return diff_context:sub(1, max_diff_length) .. "\n... (diff truncated for token limits)", nil, true
+  end
+
+  return diff_context, nil, false
+end
+
 local function collect_git_data(config)
   local diff_context =
     vim.fn.system "git -P diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --cached -U10"
@@ -152,38 +192,18 @@ local function collect_git_data(config)
     return nil
   end
 
-  if diff_context == "" then
-    vim.notify("No staged changes found. Add files with 'git add' first.", vim.log.levels.ERROR)
+  local prepared, err, truncated = prepare_diff_context(config, diff_context, "No staged changes found. Add files with 'git add' first.")
+
+  if not prepared then
+    vim.notify(err, vim.log.levels.ERROR)
     return nil
   end
 
-  local ignored_files = config and config.ignored_files or {}
-  local max_diff_length = config and config.max_diff_length
-
-  if max_diff_length and #diff_context > max_diff_length then
-    diff_context = diff_context:sub(1, max_diff_length) .. "\n... (diff truncated for token limits)"
+  if truncated then
     vim.notify("Diff truncated to avoid token limits.", vim.log.levels.INFO)
   end
 
-  if #ignored_files > 0 then
-    local hunks = split_diff_by_file(diff_context)
-    local filtered = {}
-
-    for _, h in ipairs(hunks) do
-      if not is_file_ignored(h.filename or "", ignored_files) then
-        table.insert(filtered, h.hunk)
-      end
-    end
-
-    diff_context = table.concat(filtered, "\n")
-
-    if diff_context == "" then
-      vim.notify("All staged changes are in ignored files or no changes found.", vim.log.levels.ERROR)
-      return nil
-    end
-  end
-
-  return { diff = diff_context, commits = get_recent_commits() }
+  return { diff = prepared, commits = get_recent_commits() }
 end
 
 local function escape_pattern(str)
@@ -383,7 +403,19 @@ end
 function M.generate_for_diff(config, diff_text, opts)
   opts = opts or {}
 
-  local git_data = { diff = diff_text, commits = get_recent_commits() }
+  local prepared, err, truncated = prepare_diff_context(config, diff_text, "No changes found in provided diff.")
+
+  if not prepared then
+    emit_result(opts, nil, err)
+    vim.notify(err, vim.log.levels.ERROR)
+    return
+  end
+
+  if truncated then
+    vim.notify("Diff truncated to avoid token limits.", vim.log.levels.INFO)
+  end
+
+  local git_data = { diff = prepared, commits = get_recent_commits() }
   local template = config.commit_prompt_template or default_commit_prompt_template
   local system_prompt = config.system_prompt or default_system_prompt
   local prompt = create_prompt(git_data, template, opts.extra_prompt)
@@ -398,8 +430,8 @@ function M.generate_for_diff(config, diff_text, opts)
     model = config.model,
     body = body,
     label = "AICommit",
-  }, function(response, err)
-    handle_api_response(response, err, opts)
+  }, function(response, err2)
+    handle_api_response(response, err2, opts)
   end)
 end
 
