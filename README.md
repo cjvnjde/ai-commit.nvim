@@ -6,7 +6,7 @@ Generate AI commit message suggestions for your staged changes.
 
 It can also be used by other plugins (like [ai-split-commit.nvim](https://github.com/cjvnjde/ai-split-commit.nvim)) through a small public API to generate commit messages from an arbitrary diff.
 
-![image](https://i.imgur.com/mDR44F5.png)
+![image](https://i.postimg.cc/QCD3WpJ4/temp-screenshot-20260328-210514.png)
 
 ## Features
 
