@@ -229,27 +229,41 @@ local function create_prompt(git_data, template, extra_prompt)
   return template
 end
 
-local function prepare_request_body(prompt, system_prompt, model, max_tokens)
-  system_prompt = system_prompt or default_system_prompt
+---------------------------------------------------------------------------
+-- Streaming request helper
+---------------------------------------------------------------------------
 
-  local body = {
-    model = model,
-    messages = {
-      { role = "system", content = system_prompt },
-      { role = "user", content = prompt },
-    },
-  }
+local function send_request(config, prompt, system_prompt, options, callback)
+  local ai = require "ai-provider"
+  local model = ai.get_model(config.provider or "openrouter", config.model)
 
-  if max_tokens then
-    body.max_tokens = max_tokens
+  if not model then
+    local err = "Unknown model: " .. (config.provider or "openrouter") .. "/" .. config.model
+    callback(nil, err)
+    return
   end
 
-  return body
+  local context = {
+    system_prompt = system_prompt or default_system_prompt,
+    messages = { { role = "user", content = prompt } },
+  }
+
+  local opts = vim.tbl_deep_extend("force", {
+    max_tokens = config.max_tokens,
+  }, config.ai_options or {}, options or {})
+
+  ai.complete_simple(model, context, opts, function(msg)
+    vim.schedule(function()
+      callback(msg, nil)
+    end)
+  end)
 end
 
 ---------------------------------------------------------------------------
--- Response parsing
+-- Response handling
 ---------------------------------------------------------------------------
+
+local save_debug_response
 
 local function parse_commit_messages(text)
   local messages = {}
@@ -282,91 +296,120 @@ local function parse_commit_messages(text)
   return messages
 end
 
+--- Extract concatenated text from an AssistantMessage.
+local function extract_text(msg)
+  local parts = {}
+  for _, block in ipairs(msg.content or {}) do
+    if block.type == "text" and block.text then
+      table.insert(parts, block.text)
+    end
+  end
+  return table.concat(parts, "")
+end
+
 local function emit_result(opts, messages, err)
   if opts and opts.on_result then
     opts.on_result(messages, err)
   end
 end
 
-local function handle_api_response(response, err, opts)
-  if err then
-    emit_result(opts, nil, err)
-    vim.notify("Request failed: " .. err, vim.log.levels.ERROR)
+local function handle_response(msg, opts, err)
+  if not msg then
+    local emsg = err or "Request failed"
+    emit_result(opts, nil, emsg)
+    vim.notify("Request failed: " .. emsg, vim.log.levels.ERROR)
     return
   end
 
-  if response.status == 200 then
-    local ok, data = pcall(vim.json.decode, response.body)
-
-    if ok and data and data.choices and #data.choices > 0 and data.choices[1].message and data.choices[1].message.content then
-      local messages = parse_commit_messages(data.choices[1].message.content)
-
-      if #messages > 0 then
-        emit_result(opts, messages, nil)
-
-        if opts and opts.show_picker == false and not opts.on_select then
-          return
-        end
-
-        require("ai-commit").show_commit_suggestions(messages, opts)
-      else
-        emit_result(opts, nil, "No commit messages were generated")
-        vim.notify("No commit messages were generated. Try again or modify your changes.", vim.log.levels.WARN)
-      end
-    else
-      emit_result(opts, nil, "Received empty response from model")
-      vim.notify("Received empty response from model. Try again in a few moments.", vim.log.levels.WARN)
-    end
-  else
-    local error_info = "Unknown error"
-    local ok, error_data = pcall(vim.json.decode, response.body)
-
-    if ok and error_data and error_data.error then
-      local error_code = error_data.error.code or response.status
-      local error_message = error_data.error.message or "No error message provided"
-
-      if error_code == 402 then
-        error_info = "Insufficient credits: " .. error_message
-      elseif error_code == 408 then
-        error_info = "Request timed out. Try again later."
-      elseif error_code == 429 then
-        error_info = "Rate limited. Please wait before trying again."
-      elseif error_code == 502 then
-        error_info = "Model provider error: " .. error_message
-      elseif error_code == 503 then
-        error_info = "No available model provider: " .. error_message
-      else
-        error_info = string.format("Error %d: %s", error_code, error_message)
-      end
-    else
-      error_info = string.format("HTTP %d: %s", response.status, response.body or "")
-    end
-
-    emit_result(opts, nil, error_info)
-    vim.notify("Failed to generate commit message: " .. error_info, vim.log.levels.ERROR)
+  -- Save response to debug file if path was captured
+  if opts and opts._debug_path then
+    save_debug_response(opts._debug_path, msg)
   end
+
+  if msg.stop_reason == "error" or msg.stop_reason == "aborted" then
+    local emsg = msg.error_message or "Request failed"
+    emit_result(opts, nil, emsg)
+    vim.notify("Request failed: " .. emsg, vim.log.levels.ERROR)
+    return
+  end
+
+  local text = extract_text(msg)
+
+  if text == "" then
+    emit_result(opts, nil, "Received empty response from model")
+    vim.notify("Received empty response from model. Try again in a few moments.", vim.log.levels.WARN)
+    return
+  end
+
+  local messages = parse_commit_messages(text)
+
+  if #messages == 0 then
+    emit_result(opts, nil, "No commit messages were generated")
+    vim.notify("No commit messages were generated. Try again or modify your changes.", vim.log.levels.WARN)
+    return
+  end
+
+  emit_result(opts, messages, nil)
+
+  if opts and opts.show_picker == false and not opts.on_select then
+    return
+  end
+
+  require("ai-commit").show_commit_suggestions(messages, opts)
 end
 
 ---------------------------------------------------------------------------
 -- Debug
 ---------------------------------------------------------------------------
 
-local function save_debug_prompt(prompt, system_prompt)
-  local debug_dir = vim.fn.stdpath "cache" .. "/ai-commit-debug"
-  vim.fn.mkdir(debug_dir, "p")
+local function get_debug_path(config)
+  if not config.debug then return nil end
+  local dir = vim.fn.stdpath "cache" .. "/ai-commit-debug"
+  vim.fn.mkdir(dir, "p")
+  return dir .. "/" .. os.date "%Y%m%d_%H%M%S" .. ".txt"
+end
 
-  local timestamp = os.date "%Y%m%d_%H%M%S"
-  local debug_file = debug_dir .. "/prompt_" .. timestamp .. ".txt"
-  local content = "=== SYSTEM PROMPT ===\n" .. (system_prompt or "") .. "\n\n=== USER PROMPT ===\n" .. prompt
-
-  local file = io.open(debug_file, "w")
+local function save_debug_prompt(path, prompt, system_prompt)
+  if not path then return end
+  local file = io.open(path, "w")
   if file then
-    file:write(content)
+    file:write("=== SYSTEM PROMPT ===\n" .. (system_prompt or ""))
+    file:write("\n\n=== USER PROMPT ===\n" .. prompt)
     file:close()
-    vim.schedule(function()
-      vim.notify("Debug: Prompt saved to " .. debug_file, vim.log.levels.INFO)
-    end)
   end
+end
+
+save_debug_response = function(path, msg)
+  if not path or not msg then return end
+  local file = io.open(path, "a")
+  if not file then return end
+
+  file:write("\n\n=== RESPONSE ===\n")
+  file:write("stop_reason: " .. (msg.stop_reason or "?") .. "\n")
+  if msg.error_message then
+    file:write("error: " .. msg.error_message .. "\n")
+  end
+  if msg.usage then
+    local u = msg.usage
+    file:write(string.format("usage: %d in / %d out / %d cached",
+      u.input or 0, u.output or 0, u.cache_read or 0))
+    if (u.reasoning_tokens or 0) > 0 then
+      file:write(string.format(" / %d reasoning", u.reasoning_tokens))
+    end
+    file:write("\n")
+  end
+  file:write("\n")
+  for _, block in ipairs(msg.content or {}) do
+    if block.type == "thinking" and block.thinking then
+      file:write("[thinking]\n" .. block.thinking .. "\n\n")
+    elseif block.type == "text" and block.text then
+      file:write(block.text)
+    end
+  end
+  file:close()
+  vim.schedule(function()
+    vim.notify("Debug: saved to " .. path, vim.log.levels.INFO)
+  end)
 end
 
 ---------------------------------------------------------------------------
@@ -382,24 +425,19 @@ function M.generate_commit(config, extra_prompt)
   local template = config.commit_prompt_template or default_commit_prompt_template
   local system_prompt = config.system_prompt or default_system_prompt
   local prompt = create_prompt(git_data, template, extra_prompt)
-  local body = prepare_request_body(prompt, system_prompt, config.model, config.max_tokens)
 
-  if config.debug then
-    save_debug_prompt(prompt, system_prompt)
-  end
+  local debug_path = get_debug_path(config)
+  save_debug_prompt(debug_path, prompt, system_prompt)
 
-  require("ai-provider").request({
-    provider = config.provider or "openrouter",
-    model = config.model,
-    body = body,
-    label = "AICommit",
-  }, handle_api_response)
+  send_request(config, prompt, system_prompt, nil, function(msg, err)
+    handle_response(msg, { _debug_path = debug_path }, err)
+  end)
 end
 
 --- Generate commit messages from an explicit diff text.
 --- @param config table Plugin config
 --- @param diff_text string The diff to generate messages for
---- @param opts? table { extra_prompt?: string, on_select?: fun(message: string) }
+--- @param opts? table { extra_prompt?: string, on_select?: fun(message: string), on_result?: fun(messages: string[]|nil, err: string|nil), show_picker?: boolean }
 function M.generate_for_diff(config, diff_text, opts)
   opts = opts or {}
 
@@ -419,19 +457,13 @@ function M.generate_for_diff(config, diff_text, opts)
   local template = config.commit_prompt_template or default_commit_prompt_template
   local system_prompt = config.system_prompt or default_system_prompt
   local prompt = create_prompt(git_data, template, opts.extra_prompt)
-  local body = prepare_request_body(prompt, system_prompt, config.model, config.max_tokens)
 
-  if config.debug then
-    save_debug_prompt(prompt, system_prompt)
-  end
+  local debug_path = get_debug_path(config)
+  save_debug_prompt(debug_path, prompt, system_prompt)
 
-  require("ai-provider").request({
-    provider = config.provider or "openrouter",
-    model = config.model,
-    body = body,
-    label = "AICommit",
-  }, function(response, err2)
-    handle_api_response(response, err2, opts)
+  send_request(config, prompt, system_prompt, nil, function(msg, err)
+    opts._debug_path = debug_path
+    handle_response(msg, opts, err)
   end)
 end
 

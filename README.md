@@ -20,7 +20,7 @@ It can also be used by other plugins (like [ai-split-commit.nvim](https://github
 - Gitcommit buffer support (pastes the message instead of committing)
 - Extra instructions via command args (e.g., `:AICommit focus on the bug fix`)
 - Custom prompt templates
-- Debug prompt logging
+- Debug prompt/response logging
 - Public API for generating messages from an explicit diff
 
 ---
@@ -74,8 +74,75 @@ require("ai-commit").setup(opts)
 | `commit_prompt_template` | `string?` | `nil` | Custom user prompt template. See [Prompt Customization](#prompt-customization) for available placeholders. When `nil`, the built-in template is used. |
 | `system_prompt` | `string?` | `nil` | Custom system prompt. When `nil`, the built-in system prompt is used. |
 | `ignored_files` | `string[]` | `{}` | List of file paths or glob patterns to exclude from the staged diff before sending to the AI. |
-| `debug` | `boolean` | `false` | Save prompts to `~/.cache/nvim/ai-commit-debug/` for inspection. |
-| `provider_config` | `table?` | `nil` | Provider-specific settings forwarded to `ai-provider.setup()`. See [ai-provider.nvim](https://github.com/cjvnjde/ai-provider.nvim) for details. |
+| `debug` | `boolean` | `false` | Save prompt + response transcripts to `~/.cache/nvim/ai-commit-debug/` for inspection. |
+| `ai_options` | `table` | `{}` | Per-request options forwarded to `ai-provider.complete_simple()`. Use this for request-scoped settings such as `reasoning`, `temperature`, `headers`, or future request parameters added by `ai-provider.nvim`. |
+| `ai_provider` | `table?` | `nil` | Full shared `ai-provider.setup()` passthrough. Use this to configure global `ai-provider.nvim` behavior such as `reasoning`, `debug`, `debug_toast`, `notification`, `providers`, or `custom_models` directly from `ai-commit.nvim`, with no separate `ai-provider.nvim` config block required. |
+
+### `ai_provider` vs `ai_options`
+
+- Use `ai_options` for **this plugin's requests only**.
+- Use `ai_provider` for **shared/global `ai-provider.nvim` setup**.
+- `debug = true` in `ai-commit.nvim` saves a readable prompt/response transcript for commit generation.
+- `ai_provider.debug = true` saves raw provider-level JSON request/response dumps.
+- If both `ai-commit.nvim` and another plugin set `ai_provider`, the resulting `ai-provider.nvim` config is shared, because `ai-provider.nvim` itself is global.
+- In normal setups, you do **not** need a separate `ai-provider.nvim` `opts = { ... }` block at all.
+
+Common patterns:
+
+**1. High reasoning only for commit generation**
+
+```lua
+opts = {
+  provider = "github-copilot",
+  model = "gpt-5-mini",
+  ai_options = {
+    reasoning = "high",
+  },
+}
+```
+
+**2. Enable debug dumps + live debug toast globally through `ai-commit.nvim`**
+
+```lua
+opts = {
+  provider = "github-copilot",
+  model = "gpt-5-mini",
+  ai_options = {
+    reasoning = "high",
+  },
+  ai_provider = {
+    debug = true,
+    debug_toast = { enabled = true },
+    notification = { enabled = true },
+  },
+}
+```
+
+**3. Register or override models without touching `ai-provider.nvim` directly**
+
+```lua
+opts = {
+  provider = "openrouter",
+  model = "openai/gpt-5-mini",
+  ai_provider = {
+    custom_models = {
+      openrouter = {
+        {
+          id = "openai/gpt-5-mini",
+          name = "GPT-5 Mini (my tuned preset)",
+          api = "openai-completions",
+          provider = "openrouter",
+          base_url = "https://openrouter.ai/api/v1",
+          reasoning = true,
+          input = { "text", "image" },
+          context_window = 128000,
+          max_tokens = 64000,
+        },
+      },
+    },
+  },
+}
+```
 
 ---
 
@@ -140,9 +207,11 @@ export OPENROUTER_API_KEY=sk-or-...
   opts = {
     provider = "openrouter",
     model = "google/gemini-2.5-flash",
-    provider_config = {
-      openrouter = {
-        api_key = "sk-or-your-key-here",
+    ai_provider = {
+      providers = {
+        openrouter = {
+          api_key = "sk-or-your-key-here",
+        },
       },
     },
   },
@@ -196,9 +265,11 @@ export OPENROUTER_API_KEY=sk-or-...
   opts = {
     provider = "github-copilot",
     model = "gpt-5-mini",
-    provider_config = {
-      ["github-copilot"] = {
-        enterprise_domain = "company.ghe.com",
+    ai_provider = {
+      providers = {
+        ["github-copilot"] = {
+          enterprise_domain = "company.ghe.com",
+        },
       },
     },
   },
@@ -271,7 +342,7 @@ Useful for monorepos or very large changesets:
 }
 ```
 
-### 10. Debug mode — inspect prompts
+### 10. Debug mode — inspect prompt + response
 
 ```lua
 {
@@ -289,7 +360,7 @@ Useful for monorepos or very large changesets:
 }
 ```
 
-Prompts are saved to `~/.cache/nvim/ai-commit-debug/`.
+Prompt + response transcripts are saved to `~/.cache/nvim/ai-commit-debug/`.
 
 ### 11. Anthropic Claude direct (via API key)
 
@@ -356,9 +427,11 @@ export GEMINI_API_KEY=AIza...
       "pnpm-lock.yaml",
       "dist/*",
     },
-    provider_config = {
-      ["github-copilot"] = {
-        enterprise_domain = "company.ghe.com",
+    ai_provider = {
+      providers = {
+        ["github-copilot"] = {
+          enterprise_domain = "company.ghe.com",
+        },
       },
     },
   },

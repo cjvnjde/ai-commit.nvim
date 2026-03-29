@@ -10,6 +10,8 @@ M.config = {
   debug = false,
   max_tokens = 4096,
   max_diff_length = nil,
+  ai_options = {},   -- per-request passthrough forwarded to ai-provider.complete_simple()
+  ai_provider = nil, -- full ai-provider.setup() passthrough (global)
 }
 
 M.last_commit_messages = nil
@@ -68,15 +70,18 @@ end
 -- Setup
 ---------------------------------------------------------------------------
 
+local function apply_ai_provider_setup(opts)
+  if not opts or not opts.ai_provider then return end
+  require("ai-provider").setup(opts.ai_provider)
+end
+
 M.setup = function(opts)
   if opts then
     M.config = vim.tbl_deep_extend("force", M.config, opts)
   end
 
-  -- Forward provider-specific settings to ai-provider if supplied.
-  if opts and opts.provider_config then
-    require("ai-provider").setup { providers = opts.provider_config }
-  end
+  -- Forward ai-provider config through the consumer plugin for convenience.
+  apply_ai_provider_setup(opts)
 
   -- Restore previously picked model (only if provider still matches).
   local saved = load_saved_model()
