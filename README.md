@@ -2,7 +2,7 @@
 
 Generate AI commit message suggestions for your staged changes.
 
-`ai-commit.nvim` reads the staged diff, asks an AI model for several Conventional Commit suggestions, and lets you pick one from a Telescope picker. It supports multiple providers through [ai-provider.nvim](https://github.com/cjvnjde/ai-provider.nvim) — including GitHub Copilot (free with a Copilot subscription) and OpenRouter (access to dozens of models).
+`ai-commit.nvim` reads the staged diff, asks an AI model for several commit message suggestions in the selected style, and lets you pick one from a Telescope picker. It supports multiple providers through [ai-provider.nvim](https://github.com/cjvnjde/ai-provider.nvim) — including GitHub Copilot (free with a Copilot subscription) and OpenRouter (access to dozens of models).
 
 It can also be used by other plugins (like [ai-split-commit.nvim](https://github.com/cjvnjde/ai-split-commit.nvim)) through a small public API to generate commit messages from an arbitrary diff.
 
@@ -11,7 +11,8 @@ It can also be used by other plugins (like [ai-split-commit.nvim](https://github
 ## Features
 
 - Generate multiple commit message suggestions from staged changes
-- Conventional Commits output (type(scope): subject + optional body)
+- Built-in commit styles: `regular`, `conventional`, and `emoji`
+- Persisted commit style selection via `:AICommitStyle`
 - Telescope picker UI with preview
 - Model browser via `:AICommitModels`
 - Ignored file filtering (skip lockfiles, build output, etc.)
@@ -19,7 +20,8 @@ It can also be used by other plugins (like [ai-split-commit.nvim](https://github
 - Optional auto-push after commit
 - Gitcommit buffer support (pastes the message instead of committing)
 - Extra instructions via command args (e.g., `:AICommit focus on the bug fix`)
-- Custom prompt templates
+- Custom commit styles with placeholder support
+- Legacy full prompt overrides
 - Debug prompt/response logging
 - Public API for generating messages from an explicit diff
 
@@ -69,10 +71,12 @@ require("ai-commit").setup(opts)
 | `provider` | `string` | `"openrouter"` | AI provider to use. One of `"openrouter"`, `"github-copilot"`, `"anthropic"`, `"google"`, `"openai"`, `"xai"`, `"groq"`, `"cerebras"`, `"mistral"`. |
 | `model` | `string` | `"google/gemini-2.5-flash"` | Model ID for the selected provider. Use `:AICommitModels` to browse available models. |
 | `auto_push` | `boolean` | `false` | Automatically push after a successful commit. |
+| `commit_style` | `string` | `"regular"` | Active commit style. Built-ins: `regular` (default), `conventional`, `emoji`. Use `:AICommitStyle` to switch and persist it. |
+| `commit_styles` | `table` | `{}` | Custom commit style dictionary, e.g. `{ my_style = { label?, description?, system_prompt?, user_prompt? } }`. Missing `system_prompt` or `user_prompt` fields inherit from the built-in `regular` style. |
 | `max_tokens` | `number` | `4096` | Maximum output tokens for the AI response. |
 | `max_diff_length` | `number?` | `nil` | Truncate the staged diff to this many characters before sending. Useful for very large diffs that would exceed token limits. When `nil`, the full diff is sent. |
-| `commit_prompt_template` | `string?` | `nil` | Custom user prompt template. See [Prompt Customization](#prompt-customization) for available placeholders. When `nil`, the built-in template is used. |
-| `system_prompt` | `string?` | `nil` | Custom system prompt. When `nil`, the built-in system prompt is used. |
+| `commit_prompt_template` | `string?` | `nil` | Legacy global user prompt override. Overrides the active style's `user_prompt` for all styles. See [Commit Styles and Prompt Customization](#commit-styles-and-prompt-customization). |
+| `system_prompt` | `string?` | `nil` | Legacy global system prompt override. Overrides the resolved style system prompt for all styles. |
 | `ignored_files` | `string[]` | `{}` | List of file paths or glob patterns to exclude from the staged diff before sending to the AI. |
 | `debug` | `boolean` | `false` | Save prompt + response transcripts to `~/.cache/nvim/ai-commit-debug/` for inspection. |
 | `ai_options` | `table` | `{}` | Per-request options forwarded to `ai-provider.complete_simple()`. Use this for request-scoped settings such as `reasoning`, `temperature`, `headers`, or future request parameters added by `ai-provider.nvim`. |
@@ -465,6 +469,17 @@ Pick a message from Telescope and press `<Enter>`.
 :AICommit this is a breaking change
 ```
 
+### Select a commit style
+
+```vim
+:AICommitStyle
+:AICommitStyle regular
+:AICommitStyle conventional
+:AICommitStyle emoji
+```
+
+The selected style is saved and reused for future commit generation requests.
+
 ### In a gitcommit buffer
 
 If the current buffer has `filetype=gitcommit` (e.g., when running `git commit` with `EDITOR=nvim`), selecting a suggestion pastes the message into that buffer instead of running `git commit -m`.
@@ -475,12 +490,13 @@ If the current buffer has `filetype=gitcommit` (e.g., when running `git commit` 
 
 | Command | Description |
 | --- | --- |
-| `:AICommit [extra prompt]` | Generate commit suggestions from staged changes. Optional extra instructions are appended to the prompt. |
+| `:AICommit [extra prompt]` | Generate commit suggestions from staged changes using the active style. Optional extra instructions are appended to the prompt. |
 | `:AICommitLast` | Re-open the last generated suggestions in Telescope (no new AI request). |
+| `:AICommitStyle [style]` | Open a style picker or set the active commit style directly. The selection is persisted to disk. |
 | `:AICommitModels [provider]` | Browse and select a model for the current or specified provider. The selection is persisted to disk. |
 | `:AICommitLogin [provider]` | Authenticate with a provider (default: current provider). Required for GitHub Copilot. |
 | `:AICommitLogout [provider]` | Remove stored credentials for a provider. |
-| `:AICommitStatus` | Show current provider, model, and authentication status. |
+| `:AICommitStatus` | Show current provider, model, and commit style. |
 
 ---
 
@@ -498,6 +514,27 @@ The selected model is persisted to `~/.local/share/nvim/ai-commit/model_selectio
 
 ---
 
+## Commit Style Selection
+
+Built-in styles:
+
+- `regular` — default style. It checks recent commits and tries to match the existing repository style. If there are no previous commits, it falls back to short descriptive messages.
+- `conventional` — Conventional Commits (`type(scope): subject`) with an optional body.
+- `emoji` — concise commit messages that start with a fitting emoji.
+
+Use either the Telescope picker or direct command:
+
+```vim
+:AICommitStyle
+:AICommitStyle regular
+:AICommitStyle conventional
+:AICommitStyle emoji
+```
+
+The selected style is persisted to `~/.local/share/nvim/ai-commit/commit_style_selection.json` and restored on next startup if that style still exists.
+
+---
+
 ## Public API
 
 ### Generate from staged changes
@@ -509,12 +546,13 @@ require("ai-commit").generate_commit("emphasize test changes")
 
 ### Generate from an explicit diff
 
-This is used by `ai-split-commit.nvim`, but you can use it yourself too.
+This is used by `ai-split-commit.nvim`, but you can use it yourself too. Pass `style = "..."` to override the currently selected style for a single request.
 
 #### Interactive selection (opens Telescope)
 
 ```lua
 require("ai-commit").generate_commit_for_diff(diff_text, {
+  style = "emoji",
   extra_prompt = "focus on the bug fix",
   on_select = function(message)
     print("selected:", message)
@@ -526,6 +564,7 @@ require("ai-commit").generate_commit_for_diff(diff_text, {
 
 ```lua
 require("ai-commit").generate_commit_for_diff(diff_text, {
+  style = "conventional",
   extra_prompt = "Generate exactly one commit message only.",
   show_picker = false,
   on_result = function(messages, err)
@@ -542,6 +581,7 @@ require("ai-commit").generate_commit_for_diff(diff_text, {
 
 ```lua
 require("ai-commit").generate_commit_messages_for_diff(diff_text, {
+  style = "regular",
   extra_prompt = "Generate exactly one commit message only.",
 }, function(messages, err)
   if err then
@@ -556,19 +596,112 @@ If `on_select` is omitted, the plugin uses its default behavior (commit or paste
 
 ---
 
-## Prompt Customization
+## Commit Styles and Prompt Customization
 
-You can replace the user prompt and/or system prompt entirely.
+The plugin now has style-independent default system behavior plus style-specific prompts.
+
+### Built-in styles
+
+- `regular` — default. Inspect recent commits and try to match the existing repository style. If there are no previous commits, write short descriptive messages.
+- `conventional` — Conventional Commits output.
+- `emoji` — commit subjects start with a fitting emoji.
+
+### Custom styles
+
+Add custom styles with `commit_styles`:
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  opts = {
+    commit_style = "jira",
+    commit_styles = {
+      jira = {
+        label = "Jira",
+        description = "Short commits prefixed with a ticket reference",
+        system_prompt = [[
+You are a commit message writer.
+Generate several concise commit message options.
+Always separate each complete commit message with:
+--- END COMMIT ---
+]],
+        user_prompt = [[
+Write several short commit messages for the diff below.
+
+Style rules:
+- Match the general tone of recent commits when possible.
+- If <extra_prompt /> contains a ticket number, place it at the start of the subject.
+- Keep the subject short and descriptive.
+
+Diff:
+<git_diff />
+
+Recent commits:
+<recent_commits />
+]],
+      },
+    },
+  },
+}
+```
+
+Each custom style can define:
+
+- `label`
+- `description`
+- `system_prompt`
+- `user_prompt`
+
+If `system_prompt` or `user_prompt` is missing, that field inherits from the built-in `regular` style.
+
+You can also override built-in styles by reusing their keys:
+
+```lua
+{
+  "cjvnjde/ai-commit.nvim",
+  opts = {
+    commit_styles = {
+      conventional = {
+        user_prompt = [[
+Write several Conventional Commit messages.
+Prefer very short subjects and only add a body when necessary.
+
+Diff:
+<git_diff/>
+
+Recent commits:
+<recent_commits/>
+]],
+      },
+    },
+  },
+}
+```
 
 ### Available placeholders
+
+Placeholders work in both `system_prompt` and `user_prompt`.
+A space before `/>` is also accepted, so both `<git_diff/>` and `<git_diff />` work.
 
 | Placeholder | Description |
 |-------------|-------------|
 | `<git_diff/>` | The staged diff (after filtering and truncation) |
-| `<recent_commits/>` | The last 5 commit subjects from `git log --oneline` |
+| `<recent_commits/>` | The last 5 commit subjects from `git log --format=%s -n 5` |
 | `<extra_prompt/>` | Extra instructions passed via `:AICommit ...` args |
 
-### Example: custom prompt template
+### Separator note
+
+For multiple suggestions to be parsed correctly, prompts should tell the model to separate each commit with exactly:
+
+```text
+--- END COMMIT ---
+```
+
+The built-in prompts already do this. If you fully override prompts and omit the separator instruction, the plugin still works, but the whole response will be treated as a single commit suggestion.
+
+### Legacy global overrides
+
+For backward compatibility, you can still override the active style globally with `commit_prompt_template` and `system_prompt`:
 
 ```lua
 {
@@ -588,21 +721,9 @@ Diff:
 Recent commits:
 <recent_commits/>
 ]],
-  },
-}
-```
-
-### Example: custom system prompt
-
-```lua
-{
-  "cjvnjde/ai-commit.nvim",
-  opts = {
-    provider = "github-copilot",
-    model = "gpt-5-mini",
     system_prompt = [[
-You are a commit message writer. Generate 3-5 commit messages
-following Conventional Commits. Be concise. Use present tense.
+You are a commit message writer.
+Generate 3-5 concise commit messages.
 Separate each message with: --- END COMMIT ---
 ]],
   },

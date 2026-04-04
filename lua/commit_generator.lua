@@ -1,14 +1,35 @@
 local M = {}
 
-local default_commit_prompt_template = [[
-You are to generate multiple, different git commit messages based on the following git diff.
+local COMMIT_SEPARATOR = "--- END COMMIT ---"
 
-Format:
-- Each message must follow the Conventional Commits standard (type(scope): subject).
-- If a longer explanation is needed, add a body after a blank line, explaining WHAT and WHY.
-- Output at least 3–5 different commit messages, each focusing on a different significant aspect or perspective of the changes.
-- Separate each commit message with the separator: --- END COMMIT ---
-- Do NOT use quotes or backticks.
+local default_system_prompt = [[
+You are a git commit message writer. Generate multiple, distinct, high-quality commit message options based on the provided git diff and recent commits.
+
+General requirements:
+- Always output 3-5 different commit message options unless the user explicitly asks for a different number.
+- Each option should reflect a meaningfully different focus, phrasing, or emphasis so the user can choose the best fit.
+- Use present tense and keep the subject concise.
+- Add a body only when it materially improves clarity. If you add a body, leave a blank line between the subject and body.
+- Output only commit messages. Do not add commentary, explanations, numbering, lists, quotes, code fences, or markdown formatting.
+- After each complete commit message, write the separator line exactly as follows:
+--- END COMMIT ---
+If you omit the separator, the response may be interpreted as a single commit message.
+]]
+
+local builtin_commit_styles = {
+  regular = {
+    label = "Regular",
+    description = "Default. Match the recent repository commit style when possible.",
+    system_prompt = default_system_prompt,
+    user_prompt = [[
+Write several git commit messages for the provided changes.
+
+Style rules:
+- First, inspect Recent commits and infer the repository's usual commit style.
+- Reuse that style closely: capitalization, punctuation, prefixes, scopes, tense, language, level of detail, and whether a body is typically used.
+- If there are no previous commits or no clear pattern to follow, write short, regular, descriptive commit messages.
+- Do not force Conventional Commits unless the recent commits already use them consistently.
+- Do not force emojis unless the recent commits already use them consistently.
 
 <extra_prompt/>
 
@@ -17,41 +38,143 @@ Git diff:
 
 Recent commits:
 <recent_commits/>
-]]
+]],
+  },
+  conventional = {
+    label = "Conventional Commits",
+    description = "Use type(scope): subject with an optional body.",
+    user_prompt = [[
+Write several git commit messages for the provided changes using the Conventional Commits format.
 
-local default_system_prompt = [[
-You are a commit message writer for git. Your task is to generate multiple, distinct, high-quality commit messages following the Conventional Commits standard (types: feat, fix, build, chore, ci, docs, style, refactor, perf, test). Always output at least 3–5 different options, each reflecting a different possible focus or aspect of the changes, so the user can choose the most suitable one.
-
-For each commit message:
-
+Style rules:
 - Use the format: type(scope): concise subject line
-  The scope is optional, but recommended if it clarifies the context.
-- Use the present tense and keep subject lines under 74 characters
-- If needed, add a body after a blank line. In the body, explain WHAT was changed and, if relevant, briefly explain WHY the changes were made. Be clear but concise; don't start with "This commit..."
-- Each option should capture a different angle or purpose: e.g., focus on features, bug fixes, refactoring, or testing.
-- Do NOT use quotes, backticks, or code formatting. Output only commit messages.
+- Allowed types include: feat, fix, build, chore, ci, docs, style, refactor, perf, test
+- The scope is optional, but include it when it adds useful context
+- Keep the subject line under 74 characters
+- If needed, add a short body after a blank line explaining what changed and why
 
-**Separator:** After each commit message (including body, if present), write the separator line exactly as follows:
---- END COMMIT ---
+<extra_prompt/>
 
-Never add any other explanation, commentary, or formatting outside the commit messages and separator.
+Git diff:
+<git_diff/>
 
-Your output should look like this:
+Recent commits:
+<recent_commits/>
+]],
+  },
+  emoji = {
+    label = "Emoji",
+    description = "Start each commit subject with a fitting emoji.",
+    user_prompt = [[
+Write several git commit messages for the provided changes using an emoji-based style.
 
-type(scope): short summary
+Style rules:
+- Start each commit subject with one fitting emoji
+- After the emoji, write a short, descriptive subject line
+- Keep the message clear, concise, and easy to scan
+- If needed, add a short body after a blank line explaining what changed and why
+- Keep the language and tone natural; one emoji per commit subject is enough
 
-Longer body if needed, explaining what and why.
+<extra_prompt/>
 
---- END COMMIT ---
+Git diff:
+<git_diff/>
 
-type(other_scope): another summary
+Recent commits:
+<recent_commits/>
+]],
+  },
+}
 
-Another body.
+local builtin_commit_style_order = { "regular", "conventional", "emoji" }
 
---- END COMMIT ---
+---------------------------------------------------------------------------
+-- Commit styles
+---------------------------------------------------------------------------
 
-(etc.)
-]]
+local function get_user_commit_styles(config)
+  return config and config.commit_styles or {}
+end
+
+local function list_commit_style_names(config)
+  local names = vim.deepcopy(builtin_commit_style_order)
+  local custom = {}
+
+  for name, _ in pairs(get_user_commit_styles(config)) do
+    if not vim.tbl_contains(names, name) then
+      table.insert(custom, name)
+    end
+  end
+
+  table.sort(custom)
+  vim.list_extend(names, custom)
+
+  return names
+end
+
+local function get_regular_prompt_base(config)
+  local builtin_regular = builtin_commit_styles.regular or {}
+  local user_regular = get_user_commit_styles(config).regular or {}
+
+  return {
+    system_prompt = user_regular.system_prompt or builtin_regular.system_prompt or default_system_prompt,
+    user_prompt = user_regular.user_prompt or builtin_regular.user_prompt or "",
+  }
+end
+
+local function build_commit_style(config, style_name)
+  local regular = get_regular_prompt_base(config)
+  local builtin = builtin_commit_styles[style_name] or {}
+  local user = get_user_commit_styles(config)[style_name] or {}
+
+  return {
+    key = style_name,
+    label = user.label or user.name or builtin.label or style_name,
+    description = user.description or builtin.description or "Custom commit style",
+    system_prompt = user.system_prompt or builtin.system_prompt or regular.system_prompt or default_system_prompt,
+    user_prompt = user.user_prompt or builtin.user_prompt or regular.user_prompt or "",
+  }
+end
+
+function M.list_commit_styles(config)
+  local styles = {}
+
+  for _, style_name in ipairs(list_commit_style_names(config)) do
+    table.insert(styles, build_commit_style(config, style_name))
+  end
+
+  return styles
+end
+
+function M.has_commit_style(config, style_name)
+  if type(style_name) ~= "string" or style_name == "" then
+    return false
+  end
+
+  for _, name in ipairs(list_commit_style_names(config)) do
+    if name == style_name then
+      return true
+    end
+  end
+
+  return false
+end
+
+function M.resolve_commit_style(config, style_name)
+  local requested = style_name
+
+  if type(requested) ~= "string" or requested == "" then
+    requested = config and config.commit_style or "regular"
+  end
+
+  if M.has_commit_style(config, requested) then
+    return requested, build_commit_style(config, requested), false
+  end
+
+  return "regular", build_commit_style(config, "regular"), true
+end
+
+M.commit_separator = COMMIT_SEPARATOR
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -74,7 +197,7 @@ local function split_diff_by_file(diff)
   local lines = vim.split(diff, "\n", { plain = true, trimempty = false })
 
   for _, line in ipairs(lines) do
-    if line:match "^diff%s+--git" then
+    if line:match "^diff%s+%-%-git" then
       finalize_hunk()
 
       current_hunk = { line }
@@ -82,7 +205,7 @@ local function split_diff_by_file(diff)
       local old_file, new_file = line:match "^diff%s+%-%-git%s+a/(.-)%s+b/(.+)$"
       current_file = (new_file and new_file ~= "/dev/null") and new_file or old_file
     elseif #current_hunk > 0 then
-      if line:match "^--- " then
+      if line:match "^%-%-%- " then
         local a_file = line:match "^%-%-%-%s+(.+)$"
 
         if a_file and a_file ~= "/dev/null" then
@@ -131,12 +254,12 @@ end
 
 local function get_recent_commits()
   local recent_commits = ""
-  local recent_commits_list = vim.fn.systemlist "git log --oneline -n 5 2>/dev/null"
+  local recent_commits_list = vim.fn.systemlist "git log --format=%s -n 5 2>/dev/null"
 
   if vim.v.shell_error == 0 and #recent_commits_list > 0 then
     recent_commits = table.concat(recent_commits_list, "\n")
   else
-    vim.fn.system "git rev-parse HEAD 2>/dev/null"
+    vim.fn.system "git rev-parse --verify HEAD 2>/dev/null"
 
     if vim.v.shell_error ~= 0 then
       recent_commits = "Initial repository (no previous commits)"
@@ -210,23 +333,42 @@ local function escape_pattern(str)
   return (str:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
 end
 
-local function create_prompt(git_data, template, extra_prompt)
-  template = template or default_commit_prompt_template
-
-  local replacements = {
-    ["<git_diff/>"] = git_data.diff or "",
-    ["<recent_commits/>"] = git_data.commits or "",
-    ["<extra_prompt/>"] = extra_prompt or "",
+local function build_template_context(git_data, extra_prompt)
+  return {
+    git_diff = git_data.diff or "",
+    recent_commits = git_data.commits or "",
+    extra_prompt = extra_prompt or "",
   }
+end
 
-  for placeholder, value in pairs(replacements) do
-    local escaped_placeholder = escape_pattern(placeholder)
-    local escaped_value = (value:gsub("%%", "%%%%"))
-    template = template:gsub(escaped_placeholder, escaped_value)
+local function render_template(template, context)
+  template = template or ""
+
+  for placeholder, value in pairs(context or {}) do
+    local pattern = "<%s*" .. escape_pattern(placeholder) .. "%s*/>"
+    local escaped_value = (value or ""):gsub("%%", "%%%%")
+    template = template:gsub(pattern, escaped_value)
   end
 
-  template = template:gsub("<[%w_]+/>", "")
-  return template
+  return template:gsub("<%s*[%w_]+%s*/>", "")
+end
+
+local function create_prompts(style, git_data, extra_prompt)
+  local context = build_template_context(git_data, extra_prompt)
+  local prompt = render_template(style.user_prompt, context)
+  local system_prompt = render_template(style.system_prompt, context)
+
+  return prompt, system_prompt
+end
+
+local function resolve_style_for_request(config, requested_style)
+  local style_name, style, fallback = M.resolve_commit_style(config, requested_style)
+
+  if fallback and requested_style and requested_style ~= "" then
+    vim.notify("Unknown commit style: " .. requested_style .. ". Using regular.", vim.log.levels.WARN)
+  end
+
+  return style_name, style
 end
 
 ---------------------------------------------------------------------------
@@ -267,12 +409,11 @@ local save_debug_response
 
 local function parse_commit_messages(text)
   local messages = {}
-  local separator = "--- END COMMIT ---"
   local parts = {}
   local start_pos = 1
 
   while true do
-    local sep_start, sep_end = text:find(separator, start_pos, true)
+    local sep_start, sep_end = text:find(COMMIT_SEPARATOR, start_pos, true)
 
     if not sep_start then
       local remaining = text:sub(start_pos)
@@ -369,10 +510,13 @@ local function get_debug_path(config)
   return dir .. "/" .. os.date "%Y%m%d_%H%M%S" .. ".txt"
 end
 
-local function save_debug_prompt(path, prompt, system_prompt)
+local function save_debug_prompt(path, prompt, system_prompt, style_name)
   if not path then return end
   local file = io.open(path, "w")
   if file then
+    if style_name then
+      file:write("=== COMMIT STYLE ===\n" .. style_name .. "\n\n")
+    end
     file:write("=== SYSTEM PROMPT ===\n" .. (system_prompt or ""))
     file:write("\n\n=== USER PROMPT ===\n" .. prompt)
     file:close()
@@ -422,12 +566,19 @@ function M.generate_commit(config, extra_prompt)
     return
   end
 
-  local template = config.commit_prompt_template or default_commit_prompt_template
-  local system_prompt = config.system_prompt or default_system_prompt
-  local prompt = create_prompt(git_data, template, extra_prompt)
+  local style_name, style = resolve_style_for_request(config, config.commit_style)
+  local prompt, system_prompt = create_prompts(style, git_data, extra_prompt)
+
+  -- Legacy top-level overrides still take precedence if provided.
+  if config.commit_prompt_template ~= nil then
+    prompt = render_template(config.commit_prompt_template, build_template_context(git_data, extra_prompt))
+  end
+  if config.system_prompt ~= nil then
+    system_prompt = render_template(config.system_prompt, build_template_context(git_data, extra_prompt))
+  end
 
   local debug_path = get_debug_path(config)
-  save_debug_prompt(debug_path, prompt, system_prompt)
+  save_debug_prompt(debug_path, prompt, system_prompt, style_name)
 
   send_request(config, prompt, system_prompt, nil, function(msg, err)
     handle_response(msg, { _debug_path = debug_path }, err)
@@ -437,7 +588,7 @@ end
 --- Generate commit messages from an explicit diff text.
 --- @param config table Plugin config
 --- @param diff_text string The diff to generate messages for
---- @param opts? table { extra_prompt?: string, on_select?: fun(message: string), on_result?: fun(messages: string[]|nil, err: string|nil), show_picker?: boolean }
+--- @param opts? table { extra_prompt?: string, style?: string, on_select?: fun(message: string), on_result?: fun(messages: string[]|nil, err: string|nil), show_picker?: boolean }
 function M.generate_for_diff(config, diff_text, opts)
   opts = opts or {}
 
@@ -454,12 +605,19 @@ function M.generate_for_diff(config, diff_text, opts)
   end
 
   local git_data = { diff = prepared, commits = get_recent_commits() }
-  local template = config.commit_prompt_template or default_commit_prompt_template
-  local system_prompt = config.system_prompt or default_system_prompt
-  local prompt = create_prompt(git_data, template, opts.extra_prompt)
+  local style_name, style = resolve_style_for_request(config, opts.style or config.commit_style)
+  local prompt, system_prompt = create_prompts(style, git_data, opts.extra_prompt)
+
+  -- Legacy top-level overrides still take precedence if provided.
+  if config.commit_prompt_template ~= nil then
+    prompt = render_template(config.commit_prompt_template, build_template_context(git_data, opts.extra_prompt))
+  end
+  if config.system_prompt ~= nil then
+    system_prompt = render_template(config.system_prompt, build_template_context(git_data, opts.extra_prompt))
+  end
 
   local debug_path = get_debug_path(config)
-  save_debug_prompt(debug_path, prompt, system_prompt)
+  save_debug_prompt(debug_path, prompt, system_prompt, style_name)
 
   send_request(config, prompt, system_prompt, nil, function(msg, err)
     opts._debug_path = debug_path

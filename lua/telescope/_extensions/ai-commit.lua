@@ -11,6 +11,21 @@ local function setup_opts(opts)
   return opts
 end
 
+local function enable_wrapped_preview(self)
+  vim.bo[self.state.bufnr].modifiable = false
+  vim.schedule(function()
+    local win = self.state.winid
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.wo[win].wrap = true
+      vim.wo[win].linebreak = true
+    end
+  end)
+end
+
+local function append_text_lines(lines, text)
+  vim.list_extend(lines, vim.split(text or "", "\n", { plain = true, trimempty = false }))
+end
+
 ---------------------------------------------------------------------------
 -- Commit picker
 ---------------------------------------------------------------------------
@@ -95,14 +110,7 @@ local function create_commit_picker(opts)
           local lines = vim.split(entry.value, "\n")
           vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
           vim.bo[self.state.bufnr].filetype = "gitcommit"
-          vim.bo[self.state.bufnr].modifiable = false
-          vim.schedule(function()
-            local win = self.state.winid
-            if win and vim.api.nvim_win_is_valid(win) then
-              vim.wo[win].wrap = true
-              vim.wo[win].linebreak = true
-            end
-          end)
+          enable_wrapped_preview(self)
         end,
       },
       sorter = conf.generic_sorter(opts),
@@ -204,6 +212,85 @@ local function create_model_picker(opts)
 end
 
 ---------------------------------------------------------------------------
+-- Commit style picker
+---------------------------------------------------------------------------
+
+local function create_commit_style_picker(opts)
+  local pickers = require "telescope.pickers"
+  local finders = require "telescope.finders"
+  local conf = require("telescope.config").values
+  local actions = require "telescope.actions"
+  local action_state = require "telescope.actions.state"
+  local previewers = require "telescope.previewers"
+
+  opts = setup_opts(opts)
+
+  local ai_commit = require "ai-commit"
+  local current_style = opts.current_style or ai_commit.config.commit_style
+  local styles = ai_commit.get_commit_styles()
+
+  local entry_maker = function(style)
+    local is_active = style.key == current_style
+    local icon = is_active and "● " or "  "
+    local display = icon .. style.label .. "  (" .. style.key .. ")"
+    return {
+      value = style,
+      display = display,
+      ordinal = table.concat({ style.label, style.key, style.description or "" }, " "),
+    }
+  end
+
+  pickers
+    .new(opts, {
+      prompt_title = "AI Commit Styles",
+      finder = finders.new_table {
+        results = styles,
+        entry_maker = entry_maker,
+      },
+      previewer = previewers.new_buffer_previewer {
+        title = "Commit Style Details",
+        define_preview = function(self, entry)
+          local style = entry.value
+          local is_active = style.key == current_style
+          local lines = {
+            "Style: " .. style.label,
+            "Key: " .. style.key,
+            "",
+          }
+
+          append_text_lines(lines, style.description or "")
+          table.insert(lines, "")
+          table.insert(lines, is_active and "✓ Currently active" or "Press <Enter> to select")
+          table.insert(lines, "")
+          table.insert(lines, "System prompt:")
+          append_text_lines(lines, style.system_prompt or "")
+          table.insert(lines, "")
+          table.insert(lines, "User prompt:")
+          append_text_lines(lines, style.user_prompt or "")
+
+          vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+          enable_wrapped_preview(self)
+        end,
+      },
+      sorter = conf.generic_sorter(opts),
+      attach_mappings = function(prompt_bufnr)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if selection and selection.value then
+            local style = selection.value
+            if ai_commit.set_commit_style(style.key) then
+              vim.notify("Commit style set to: " .. style.label .. " (" .. style.key .. ")", vim.log.levels.INFO)
+            end
+          end
+        end)
+        return true
+      end,
+    })
+    :find()
+end
+
+---------------------------------------------------------------------------
 -- Extension registration
 ---------------------------------------------------------------------------
 
@@ -211,5 +298,6 @@ return telescope.register_extension {
   exports = {
     commit = create_commit_picker,
     models = create_model_picker,
+    styles = create_commit_style_picker,
   },
 }
